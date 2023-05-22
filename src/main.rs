@@ -1,0 +1,268 @@
+mod arguments;
+mod models;
+use std::{
+    env,
+    fs::File,
+    io::{Write, stderr},
+    process,
+};
+
+use arguments::parse_args;
+use indicatif::{ProgressStyle, ProgressBar};
+use models::*;
+use regex::Regex;
+use ureq::Agent;
+
+fn find_release<'a>(
+    releases: &'a Vec<Release>,
+    tag: &str,
+    allow_prerelease: bool,
+) -> Option<&'a Release> {
+    for release in releases {
+        if release.prerelease && !allow_prerelease {
+            continue;
+        }
+        // if tag is latest take the first, which is
+        // the latest
+        if release.tag_name == tag || tag == "latest" {
+            return Some(release);
+        }
+    }
+    return None;
+}
+
+fn find_asset<'a>(
+    releases: &'a Vec<Release>,
+    tag: &str,
+    allow_prerelease: bool,
+    asset_name_pattern: &Regex,
+) -> Option<&'a Asset> {
+    let release_option = find_release(releases, tag, allow_prerelease);
+    if release_option.is_none() {
+        return None;
+    }
+    let release = match release_option {
+        None => return None,
+        Some(release) => release,
+    };
+    for asset in &release.assets {
+        if asset_name_pattern.is_match(&asset.name) {
+            return Some(asset);
+        }
+    }
+    None
+}
+
+
+fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
+
+    let releases_address = format!("https://api.github.com/repos/{}/releases", repository);
+
+    let request = agent
+        .get(&releases_address)
+        .set("user-agent", "gitweb-release-downloader");
+
+    let response = request.call().unwrap_or_else(|e| {
+        if !quiet {
+            eprintln!("HTTP request failed:\n{e}");
+        }
+        process::exit(1);
+    });
+
+    let releases_json_string = response.into_string().unwrap_or_else(|e| {
+        if !quiet {
+            eprintln!("Could not get json from response:\n{e}");
+        }
+        process::exit(1);
+    });
+
+    let releases =
+        serde_json::from_str::<Vec<Release>>(&releases_json_string).unwrap_or_else(|e| {
+            if !quiet {
+                eprintln!("Could not deserialize json:\n{e}");
+            }
+            process::exit(1);
+        });
+    return releases;
+}
+
+// TODO create error enum with type of errors
+// so we can exit the program with the respective error code
+
+// TODO use more functions instead of putting everything into main
+
+// TODO add a mode which shows all available assets/releases etc.
+
+fn main() {
+
+    
+    let parsed_args = parse_args(env::args().collect());
+    
+    // TODO does the usage of quiet make sense?
+    // there are only prints to stderr (progress
+    // and error messages), does it even make
+    // sense to suppress stderr messages?
+    let quiet = parsed_args.quiet;
+
+    // enable ansi on windows terminals
+	// I think indicatif does this automatically,
+	// but just to be sure:
+	// TODO check if indicatif enables ansi on windows terminals
+
+    let compiled_asset_pattern = Regex::new(&parsed_args.asset_pattern).unwrap_or_else(|e| {
+        if !quiet {
+            eprintln!("Could not compile RegEx:\n{e}");
+        }
+
+        process::exit(1);
+    });
+
+    let agent: Agent = ureq::AgentBuilder::new().build();
+
+    let releases = get_releases(&agent, &parsed_args.repository, parsed_args.quiet);
+
+    let asset_option = find_asset(
+        &releases,
+        &parsed_args.tag,
+        parsed_args.allow_prerelease,
+        &compiled_asset_pattern,
+    );
+
+    let Some(asset) = asset_option else{ 
+        if !quiet {
+            eprintln!(
+                r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
+                asset_pattern = parsed_args.asset_pattern,
+                tag = parsed_args.tag,
+                repository = parsed_args.repository,
+            );
+        }
+        process::exit(1);
+    };
+
+    if !quiet {
+        // printing to stderr, since posix (or unix?)
+        // says progress is written to stderr
+        // this makes sense especially if we pipe the name
+        // into a script: the script gets the downloaded
+        // file name and the user can still see the progress
+        eprintln!(r#"Downloading "{}""#, &asset.name);
+    }
+
+    let request = agent
+        .get(&asset.browser_download_url)
+        .set("user-agent", "github-release-downloader");
+
+    let response = request.call().unwrap_or_else(|e|{
+        if !quiet{
+            eprintln!(r#"Error downloading file:\n{e}"#);
+        }
+        process::exit(1);
+    });
+
+    let content_length_option: Option<usize> = response.header("content-length")
+    .map_or_else(||{None},|input|{
+        input.parse::<usize>().ok()
+    });
+
+    let out_filename = asset.name.clone();
+
+	let mut out_file = File::create(&out_filename).unwrap_or_else(|e|{
+        if !quiet{
+            eprintln!(r#"Error creating file:\n{e}"#);
+        }
+        process::exit(1);
+    });
+
+    if !quiet{
+        eprintln!("Writing to file \"{}\"", &out_filename);
+    }
+
+    let mut stream = response.into_reader();
+
+    let mut bytes_downloaded = 0;
+    let mut buffer = [0_u8; 8192];
+
+    let mut stderr_locked = stderr().lock();
+
+    let pb_option = 
+    if let Some(content_length) = content_length_option{
+        let pb = ProgressBar::new(content_length as u64);
+		// TODO I suppose this hard coded template will always succeed compiling,
+		// so it's okay to unwrap, however check that
+        let pb_style = 
+			// ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes} ({eta})")
+			ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes}")
+            .unwrap()
+            // this causes a compiler bug
+            // .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+            .progress_chars("=>-");
+        pb.set_style(pb_style);
+        Some(pb)
+    } else {
+        None
+    };
+
+    if !quiet{
+        if let Some(ref pb) = pb_option{
+            pb.set_position(0);
+        }
+    }
+
+
+	loop {
+		let chunk_result = stream.read(&mut buffer);
+		match chunk_result {
+			Err(error) => {
+				// can we even properly handle the potential error
+				// of writeln! ?
+				// If it fails we can't notify the use anyway
+				writeln!(stderr_locked, "Error reading stream:\n{error}").unwrap();
+				process::exit(1);
+			},
+			Ok(read_size) => {
+				if read_size == 0 {
+					break;
+				}
+				let file_write_result = out_file.write(&buffer[0..read_size]);
+				if let Err(error) = file_write_result{
+					// can we even properly handle the potential error
+					// of writeln! ?
+					// If it fails we can't notify the use anyway
+					writeln!(stderr_locked, "Could not write to file:\n{error}").unwrap();
+					process::exit(1);
+				}
+
+				bytes_downloaded += read_size;
+
+                if !quiet{
+                    if let Some(ref pb) = pb_option{
+                        pb.set_position(bytes_downloaded as u64);
+                    }
+                }
+			},
+		}
+	}
+
+	if !quiet{
+		if let Some(ref pb) = pb_option{
+			pb.finish();
+		}
+		// to create a new line, since progress bar does not do this
+		eprintln!();
+	}
+
+	// explicitly closing file
+	drop(out_file);
+	// explicitly unlocking stderr, so we can use
+	// eprintln again
+    drop(stderr_locked);
+
+    if !quiet {
+        eprintln!(r#"Successfully wrote to file "{}""#, &out_filename);
+        if parsed_args.print_filename{
+            print!(r#"{}"#, &out_filename)
+        }
+    }
+
+}

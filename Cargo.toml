@@ -1,0 +1,30 @@
+[package]
+name = "gitweb-release-downloader"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "grd"
+path = "src/main.rs"
+
+[dev-dependencies]
+assert_cmd = "2.0.10"
+predicates = "3.0.2"
+
+
+[dependencies]
+regex = "1.7.1"
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.93"
+ureq = "2.6.2"
+indicatif = "0.17.3"
+
+[profile.release]
+# since most of the time we are
+# waiting for the requests to finish
+# we can optimize for size and not
+# for speed
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true

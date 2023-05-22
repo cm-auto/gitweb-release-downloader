@@ -1,0 +1,5 @@
+# rust compilation files
+/target
+
+# Editor and IDE files
+/.vscode
