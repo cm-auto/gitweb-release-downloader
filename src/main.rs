@@ -7,11 +7,14 @@ use std::{
     process,
 };
 
-use arguments::parse_args;
+use arguments::{parse_args, ParsedArgs};
 use indicatif::{ProgressStyle, ProgressBar};
 use models::*;
 use regex::Regex;
-use ureq::Agent;
+use ureq::{Agent, Response};
+
+// GitHub requires the usage of a user agent
+const USERAGENT: &'static str = "gitweb-release-downloader";
 
 fn find_release<'a>(
     releases: &'a Vec<Release>,
@@ -58,11 +61,7 @@ fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
 
     let releases_address = format!("https://api.github.com/repos/{}/releases", repository);
 
-    let request = agent
-        .get(&releases_address)
-        .set("user-agent", "gitweb-release-downloader");
-
-    let response = request.call().unwrap_or_else(|e| {
+    let response = make_get_request(agent, &releases_address).unwrap_or_else(|e| {
         if !quiet {
             eprintln!("HTTP request failed:\n{e}");
         }
@@ -93,6 +92,47 @@ fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
 
 // TODO add a mode which shows all available assets/releases etc.
 
+fn get_compiled_asset_pattern_or_exit(parsed_args: &ParsedArgs) -> Regex{
+	Regex::new(&parsed_args.asset_pattern).unwrap_or_else(|e| {
+        if !parsed_args.quiet {
+            eprintln!("Could not compile RegEx:\n{e}");
+        }
+
+        process::exit(1);
+    })
+}
+
+fn get_asset_or_exit<'a>(releases: &'a Vec<Release>, parsed_args: &ParsedArgs, compiled_asset_pattern: &Regex) -> &'a Asset{
+	let asset_option = find_asset(
+        releases,
+        &parsed_args.tag,
+        parsed_args.allow_prerelease,
+        compiled_asset_pattern,
+    );
+
+    let Some(asset) = asset_option else{
+        if !parsed_args.quiet {
+            eprintln!(
+                r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
+                asset_pattern = parsed_args.asset_pattern,
+                tag = parsed_args.tag,
+                repository = parsed_args.repository,
+            );
+        }
+        process::exit(1);
+    };
+
+	asset
+}
+
+fn make_get_request(agent: &Agent, url: &str) -> Result<Response, ureq::Error>{
+	let request = agent
+        .get(url)
+        .set("user-agent", USERAGENT);
+
+    request.call()
+}
+
 fn main() {
 
     
@@ -109,36 +149,13 @@ fn main() {
 	// but just to be sure:
 	// TODO check if indicatif enables ansi on windows terminals
 
-    let compiled_asset_pattern = Regex::new(&parsed_args.asset_pattern).unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("Could not compile RegEx:\n{e}");
-        }
-
-        process::exit(1);
-    });
+    let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&parsed_args);
 
     let agent: Agent = ureq::AgentBuilder::new().build();
 
     let releases = get_releases(&agent, &parsed_args.repository, parsed_args.quiet);
 
-    let asset_option = find_asset(
-        &releases,
-        &parsed_args.tag,
-        parsed_args.allow_prerelease,
-        &compiled_asset_pattern,
-    );
-
-    let Some(asset) = asset_option else{ 
-        if !quiet {
-            eprintln!(
-                r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
-                asset_pattern = parsed_args.asset_pattern,
-                tag = parsed_args.tag,
-                repository = parsed_args.repository,
-            );
-        }
-        process::exit(1);
-    };
+    let asset = get_asset_or_exit(&releases, &parsed_args, &compiled_asset_pattern);
 
     if !quiet {
         // printing to stderr, since posix (or unix?)
@@ -149,16 +166,12 @@ fn main() {
         eprintln!(r#"Downloading "{}""#, &asset.name);
     }
 
-    let request = agent
-        .get(&asset.browser_download_url)
-        .set("user-agent", "github-release-downloader");
-
-    let response = request.call().unwrap_or_else(|e|{
-        if !quiet{
-            eprintln!(r#"Error downloading file:\n{e}"#);
-        }
-        process::exit(1);
-    });
+    let response = make_get_request(&agent, &asset.url).unwrap_or_else(|e|{
+			if !quiet{
+				eprintln!(r#"Error downloading file:\n{e}"#);
+			}
+			process::exit(1);
+	});
 
     let content_length_option: Option<usize> = response.header("content-length")
     .map_or_else(||{None},|input|{
