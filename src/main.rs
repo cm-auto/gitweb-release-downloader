@@ -3,12 +3,12 @@ mod models;
 use std::{
     env,
     fs::File,
-    io::{Write, stderr},
+    io::{stderr, Write},
     process,
 };
 
 use arguments::{parse_args, ParsedArgs};
-use indicatif::{ProgressStyle, ProgressBar};
+use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
 use regex::Regex;
 use ureq::{Agent, Response};
@@ -56,9 +56,7 @@ fn find_asset<'a>(
     None
 }
 
-
 fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
-
     let releases_address = format!("https://api.github.com/repos/{}/releases", repository);
 
     let response = make_get_request(agent, &releases_address).unwrap_or_else(|e| {
@@ -92,8 +90,8 @@ fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
 
 // TODO add a mode which shows all available assets/releases etc.
 
-fn get_compiled_asset_pattern_or_exit(parsed_args: &ParsedArgs) -> Regex{
-	Regex::new(&parsed_args.asset_pattern).unwrap_or_else(|e| {
+fn get_compiled_asset_pattern_or_exit(parsed_args: &ParsedArgs) -> Regex {
+    Regex::new(&parsed_args.asset_pattern).unwrap_or_else(|e| {
         if !parsed_args.quiet {
             eprintln!("Could not compile RegEx:\n{e}");
         }
@@ -102,8 +100,12 @@ fn get_compiled_asset_pattern_or_exit(parsed_args: &ParsedArgs) -> Regex{
     })
 }
 
-fn get_asset_or_exit<'a>(releases: &'a Vec<Release>, parsed_args: &ParsedArgs, compiled_asset_pattern: &Regex) -> &'a Asset{
-	let asset_option = find_asset(
+fn get_asset_or_exit<'a>(
+    releases: &'a Vec<Release>,
+    parsed_args: &ParsedArgs,
+    compiled_asset_pattern: &Regex,
+) -> &'a Asset {
+    let asset_option = find_asset(
         releases,
         &parsed_args.tag,
         parsed_args.allow_prerelease,
@@ -122,22 +124,95 @@ fn get_asset_or_exit<'a>(releases: &'a Vec<Release>, parsed_args: &ParsedArgs, c
         process::exit(1);
     };
 
-	asset
+    asset
 }
 
-fn make_get_request(agent: &Agent, url: &str) -> Result<Response, ureq::Error>{
-	let request = agent
-        .get(url)
-        .set("user-agent", USERAGENT);
+fn make_get_request(agent: &Agent, url: &str) -> Result<Response, ureq::Error> {
+    let request = agent.get(url).set("user-agent", USERAGENT);
 
     request.call()
 }
 
-fn main() {
+fn get_content_length(response: &Response) -> Option<usize> {
+    response
+        .header("content-length")
+        .map_or_else(|| None, |input| input.parse::<usize>().ok())
+}
 
-    
+fn create_progress_bar(content_length: usize) -> ProgressBar {
+    let pb = ProgressBar::new(content_length as u64);
+    let pb_style =
+    // ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes} ({eta})")
+    ProgressStyle::with_template(
+        "{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes}",
+    )
+    // TODO I suppose this hard coded template will always succeed compiling,
+    // so it's okay to unwrap, however check that
+    .unwrap()
+    // this causes a compiler bug
+    // .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
+    .progress_chars("=>-");
+    pb.set_style(pb_style);
+    pb
+}
+
+fn create_and_init_progress_bar(content_length_option: Option<usize>) -> Option<ProgressBar> {
+    if content_length_option.is_none() {
+        return None;
+    }
+    let content_length = content_length_option.unwrap();
+    let pb = create_progress_bar(content_length);
+    pb.set_position(0);
+    Some(pb)
+}
+
+fn stream_response_into_file(
+    response: Response,
+    mut out_file: File,
+    pb_option: &Option<ProgressBar>,
+) {
+    let mut stream = response.into_reader();
+
+    let mut bytes_downloaded = 0;
+    let mut buffer = [0_u8; 8192];
+
+    let mut stderr_locked = stderr().lock();
+
+    loop {
+        let chunk_result = stream.read(&mut buffer);
+        match chunk_result {
+            Err(error) => {
+                // can we even properly handle the potential error
+                // of writeln! ?
+                // If it fails we can't notify the use anyway
+                writeln!(stderr_locked, "Error reading stream:\n{error}").unwrap();
+                process::exit(1);
+            }
+            Ok(read_size) => {
+                // download has finished
+                if read_size == 0 {
+                    break;
+                }
+                let file_write_result = out_file.write(&buffer[0..read_size]);
+                if let Err(error) = file_write_result {
+                    writeln!(stderr_locked, "Could not write to file:\n{error}").unwrap();
+                    process::exit(1);
+                }
+
+                bytes_downloaded += read_size;
+
+                // TODO where is pb actually writing, too?
+                if let Some(ref pb) = pb_option {
+                    pb.set_position(bytes_downloaded as u64);
+                }
+            }
+        }
+    }
+}
+
+fn main() {
     let parsed_args = parse_args(env::args().collect());
-    
+
     // TODO does the usage of quiet make sense?
     // there are only prints to stderr (progress
     // and error messages), does it even make
@@ -145,9 +220,9 @@ fn main() {
     let quiet = parsed_args.quiet;
 
     // enable ansi on windows terminals
-	// I think indicatif does this automatically,
-	// but just to be sure:
-	// TODO check if indicatif enables ansi on windows terminals
+    // I think indicatif does this automatically,
+    // but just to be sure:
+    // TODO check if indicatif enables ansi on windows terminals
 
     let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&parsed_args);
 
@@ -166,116 +241,44 @@ fn main() {
         eprintln!(r#"Downloading "{}""#, &asset.name);
     }
 
-    let response = make_get_request(&agent, &asset.url).unwrap_or_else(|e|{
-			if !quiet{
-				eprintln!(r#"Error downloading file:\n{e}"#);
-			}
-			process::exit(1);
-	});
-
-    let content_length_option: Option<usize> = response.header("content-length")
-    .map_or_else(||{None},|input|{
-        input.parse::<usize>().ok()
+    let response = make_get_request(&agent, &asset.browser_download_url).unwrap_or_else(|e| {
+        if !quiet {
+            eprintln!(r#"Error downloading file:\n{e}"#);
+        }
+        process::exit(1);
     });
 
-    let out_filename = asset.name.clone();
+    let out_filename = &asset.name;
 
-	let mut out_file = File::create(&out_filename).unwrap_or_else(|e|{
-        if !quiet{
+    let out_file = File::create(&out_filename).unwrap_or_else(|e| {
+        if !quiet {
             eprintln!(r#"Error creating file:\n{e}"#);
         }
         process::exit(1);
     });
 
-    if !quiet{
+    if !quiet {
         eprintln!("Writing to file \"{}\"", &out_filename);
     }
 
-    let mut stream = response.into_reader();
-
-    let mut bytes_downloaded = 0;
-    let mut buffer = [0_u8; 8192];
-
-    let mut stderr_locked = stderr().lock();
-
-    let pb_option = 
-    if let Some(content_length) = content_length_option{
-        let pb = ProgressBar::new(content_length as u64);
-		// TODO I suppose this hard coded template will always succeed compiling,
-		// so it's okay to unwrap, however check that
-        let pb_style = 
-			// ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes} ({eta})")
-			ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes}")
-            .unwrap()
-            // this causes a compiler bug
-            // .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
-            .progress_chars("=>-");
-        pb.set_style(pb_style);
-        Some(pb)
-    } else {
+    let content_length_option = get_content_length(&response);
+    let pb_option = if quiet {
         None
+    } else {
+        create_and_init_progress_bar(content_length_option)
     };
 
-    if !quiet{
-        if let Some(ref pb) = pb_option{
-            pb.set_position(0);
-        }
+    stream_response_into_file(response, out_file, &pb_option);
+
+    if let Some(ref pb) = pb_option {
+        pb.finish();
+        eprintln!();
     }
-
-
-	loop {
-		let chunk_result = stream.read(&mut buffer);
-		match chunk_result {
-			Err(error) => {
-				// can we even properly handle the potential error
-				// of writeln! ?
-				// If it fails we can't notify the use anyway
-				writeln!(stderr_locked, "Error reading stream:\n{error}").unwrap();
-				process::exit(1);
-			},
-			Ok(read_size) => {
-				if read_size == 0 {
-					break;
-				}
-				let file_write_result = out_file.write(&buffer[0..read_size]);
-				if let Err(error) = file_write_result{
-					// can we even properly handle the potential error
-					// of writeln! ?
-					// If it fails we can't notify the use anyway
-					writeln!(stderr_locked, "Could not write to file:\n{error}").unwrap();
-					process::exit(1);
-				}
-
-				bytes_downloaded += read_size;
-
-                if !quiet{
-                    if let Some(ref pb) = pb_option{
-                        pb.set_position(bytes_downloaded as u64);
-                    }
-                }
-			},
-		}
-	}
-
-	if !quiet{
-		if let Some(ref pb) = pb_option{
-			pb.finish();
-		}
-		// to create a new line, since progress bar does not do this
-		eprintln!();
-	}
-
-	// explicitly closing file
-	drop(out_file);
-	// explicitly unlocking stderr, so we can use
-	// eprintln again
-    drop(stderr_locked);
 
     if !quiet {
         eprintln!(r#"Successfully wrote to file "{}""#, &out_filename);
-        if parsed_args.print_filename{
+        if parsed_args.print_filename {
             print!(r#"{}"#, &out_filename)
         }
     }
-
 }
