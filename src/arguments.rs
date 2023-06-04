@@ -1,33 +1,87 @@
-use std::{path, process};
+use std::{num::NonZeroUsize, path, process};
 
-fn print_help() {
+pub fn print_help() {
     println!(
         r#"Download GitHub release assets
 
+General Flags
+    -q, --quiet             will not print anything to stdout and stderr
+    -h, --help              print this help
+    -V, --version           show version number
+
+Download (Default)
 Arguments
-	-r, --repository        repository to download from
-	-t, --tag               tag of release, default is latest
-	-a, --asset-pattern     pattern of the asset to download
-	
+    -r, --repository        repository to download from
+    -t, --tag               tag of release, default is latest
+    -a, --asset-pattern     pattern of the asset to download
 Flags
-	-p, --prerelease        prereleases will be allowed
-	-q, --quiet             will not print anything to stdout and stderr
-	-h, --help              print this help
-	-V, --version           show version number
-	-f, --print-filename    prints asset's filename to stdout
+    -p, --prerelease        prereleases will be allowed
+    -f, --print-filename    prints asset's filename to stdout
+
+Query Releases (first two arguments: query releases)
+Arguments
+    -r, --repository        repository to query from
+    --count                 amount of releases to display,
+                            has to be at least 1 (1 is default)
+Flags
+    -p, --prerelease        prereleases will be allowed
+
+Query Assets (first two arguments: query assets)
+Arguments
+    -r, --repository        repository to query from
+    -t, --tag               tag of release, default is latest
+    -a, --asset-pattern     pattern of the asset match against
+                            default is ".*" (all assets)
 "#
     );
 }
 
-fn print_version() {
+pub fn print_version() {
     println!(env!("CARGO_PKG_VERSION"));
 }
 
-pub struct ParsedArgs {
-    pub bin_path: String,
-    pub bin_name: String,
+// for now just a String,
+// later it probably becomes
+// a struct, which contains website,
+// author/organization name and
+// repository name etc.
+type Repository = String;
 
-    pub repository: String,
+pub struct BasicArgs {
+    pub name: String,
+    pub path: String,
+    pub quiet: bool,
+}
+
+pub enum CommandMode {
+    Help(BasicArgs),
+    Version(BasicArgs),
+    Download(BasicArgs, DownloadArgs),
+    Query(BasicArgs, QueryType),
+}
+
+pub enum QueryType {
+    ReleasesQuery(ReleasesQueryArgs),
+    AssetsQuery(AssetsQueryArgs),
+}
+
+pub struct ReleasesQueryArgs {
+    pub repository: Repository,
+    pub allow_prerelease: bool,
+    // by default one -> just latest
+    pub count: NonZeroUsize,
+}
+
+pub struct AssetsQueryArgs {
+    pub repository: Repository,
+    // by default latest
+    pub tag: String,
+    // by default ".*" -> everything
+    pub pattern: String,
+}
+
+pub struct DownloadArgs {
+    pub repository: Repository,
     pub asset_pattern: String,
 
     // with default values
@@ -35,36 +89,17 @@ pub struct ParsedArgs {
 
     // flags
     pub allow_prerelease: bool,
-    pub quiet: bool,
-    pub help: bool,
-    pub version: bool,
     pub print_filename: bool,
 }
 
-#[allow(dead_code)]
-struct UnverfiedArgs {
-    bin_path: String,
-    bin_name: String,
-
+struct UnverfiedDownloadArgs {
     repository_option: Option<String>,
     asset_pattern_option: Option<String>,
-
     quiet: bool,
-    help: bool,
-    version: bool,
 }
 
-fn verify_args(unverified_args: UnverfiedArgs) -> (String, String) {
-    if unverified_args.help {
-        print_help();
-        process::exit(0);
-    }
-
-    if unverified_args.version {
-        print_version();
-        process::exit(0);
-    }
-
+// TODO this should return an Error (Result) instead of exiting
+fn verify_args(unverified_args: UnverfiedDownloadArgs) -> (String, String) {
     // TODO if the full link is supplied strip everything
     // that is not the repository
     if unverified_args.repository_option.is_none() {
@@ -89,7 +124,181 @@ fn verify_args(unverified_args: UnverfiedArgs) -> (String, String) {
     );
 }
 
-pub fn parse_args(args: Vec<String>) -> ParsedArgs {
+fn parse_query_releases_args(bin_path: String, bin_name: String, args: &[String]) -> CommandMode {
+    // #### arguments ####
+    let mut repository_option: Option<String> = None;
+
+    // with default values
+    let mut count: NonZeroUsize = NonZeroUsize::new(1).unwrap();
+
+    // flags
+    let mut allow_prerelease = false;
+    // quiet is required for the basic_args
+    // of course in query mode it doesn't make
+    // that much sense
+    let mut quiet = false;
+    let mut help = false;
+    let mut version = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        let current = args[i].clone();
+        let next_option = args.get(i + 1);
+
+        match current.as_str() {
+            // first check for flags
+            "--prerelease" | "-p" => allow_prerelease = true,
+            "--quiet" | "-q" => quiet = true,
+            "--help" | "-h" => help = true,
+            "--version" | "-V" => version = true,
+
+            "--count" => {
+                if let Some(next) = next_option {
+                    count = next
+                        .parse::<usize>()
+                        .ok()
+                        .and_then(NonZeroUsize::new)
+                        .unwrap_or_else(|| {
+                            eprintln!(r#"Argument "{}" has to be an int bigger than 0"#, next);
+                            print_help();
+                            process::exit(1);
+                        });
+                } else {
+                    eprintln!(r#"You must supply a value for --count"#);
+                    print_help();
+                    process::exit(1);
+                }
+                i += 1;
+            }
+            // args that need a value
+            "--repository" | "-r" => {
+                repository_option = next_option.map(|next| next.to_owned());
+                i += 1;
+            }
+            _ => {
+                eprintln!(r#"Unrecognized flag: "{}" "#, current);
+                print_help();
+                process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    let basic_args = BasicArgs {
+        name: bin_name,
+        path: bin_path,
+        quiet,
+    };
+    if help {
+        return CommandMode::Help(basic_args);
+    }
+    if version {
+        return CommandMode::Version(basic_args);
+    }
+
+    let Some(repository) = repository_option else{
+        eprintln!(r#"You must supply a value for repository"#);
+        print_help();
+        process::exit(1);
+    };
+
+    CommandMode::Query(
+        basic_args,
+        QueryType::ReleasesQuery(ReleasesQueryArgs {
+            repository,
+            allow_prerelease,
+            count,
+        }),
+    )
+}
+
+fn parse_query_assets_args(bin_path: String, bin_name: String, args: &[String]) -> CommandMode {
+    // #### arguments ####
+    let mut repository_option: Option<String> = None;
+
+    // with default values
+    let mut tag = "latest".to_string();
+    // another way to have a default value is to let
+    // this one be an option and then in the end of
+    // the function, when we need it, we can unwrap_or
+    // it with a default value
+    let mut asset_pattern_option: Option<String> = None;
+
+    // flags
+    // quiet is required for the basic_args
+    // of course in query mode it doesn't make
+    // that much sense
+    let mut quiet = false;
+    let mut help = false;
+    let mut version = false;
+
+    let mut i = 0;
+    while i < args.len() {
+        let current = args[i].clone();
+        let next_option = args.get(i + 1);
+
+        match current.as_str() {
+            // first check for flags
+            "--quiet" | "-q" => quiet = true,
+            "--help" | "-h" => help = true,
+            "--version" | "-V" => version = true,
+
+            // args that need a value
+            "--repository" | "-r" => {
+                repository_option = next_option.map(|next| next.to_owned());
+                i += 1;
+            }
+
+            "--tag" | "-t" => {
+                if let Some(next) = next_option {
+                    tag = next.to_owned();
+                }
+                i += 1;
+            }
+            "--asset-pattern" | "-a" => {
+                asset_pattern_option = next_option.map(|next| next.to_owned());
+                i += 1
+            }
+
+            _ => {
+                eprintln!(r#"Unrecognized flag: "{}" "#, current);
+                print_help();
+                process::exit(1);
+            }
+        }
+        i += 1;
+    }
+
+    let basic_args = BasicArgs {
+        name: bin_name,
+        path: bin_path,
+        quiet,
+    };
+    if help {
+        return CommandMode::Help(basic_args);
+    }
+    if version {
+        return CommandMode::Version(basic_args);
+    }
+
+    let Some(repository) = repository_option else{
+        eprintln!(r#"You must supply a value for repository"#);
+        print_help();
+        process::exit(1);
+    };
+
+    CommandMode::Query(
+        basic_args,
+        QueryType::AssetsQuery(AssetsQueryArgs {
+            repository,
+            tag: tag,
+            pattern: asset_pattern_option.unwrap_or(".*".to_string()),
+        }),
+    )
+}
+
+// TODO return result
+pub fn parse_args(args: Vec<String>) -> CommandMode {
     let bin_path = args.get(0).unwrap_or(&"grd".to_string()).to_owned();
     let bin_name = path::Path::new(&bin_path)
         .file_name()
@@ -98,6 +307,34 @@ pub fn parse_args(args: Vec<String>) -> ParsedArgs {
         .unwrap()
         .to_string_lossy()
         .to_string();
+
+    let potential_command_option = args.get(1);
+    if matches!(
+        potential_command_option,
+        Some(potential_command)
+        if potential_command == "query"
+    ) {
+        match args.get(2) {
+            Some(x) if x == "releases" => {
+                return parse_query_releases_args(bin_path, bin_name, &args[3..]);
+            }
+            Some(x) if x == "assets" => {
+                return parse_query_assets_args(bin_path, bin_name, &args[3..]);
+            }
+            Some(x) => {
+                eprintln!(r#"Unknown query type "{}""#, x);
+                print_help();
+                process::exit(1);
+            }
+            None => {
+                eprintln!(
+                    r#"You must specify the kind of query you want to do, after argument "query""#
+                );
+                print_help();
+                process::exit(1);
+            }
+        }
+    }
 
     // #### arguments ####
     let mut repository_option: Option<String> = None;
@@ -134,11 +371,11 @@ pub fn parse_args(args: Vec<String>) -> ParsedArgs {
             }
             // args that need a value
             "--repository" | "-r" => {
-                repository_option = next_option.map(|hi| hi.to_owned());
+                repository_option = next_option.map(|next| next.to_owned());
                 i += 1;
             }
             "--asset-pattern" | "-a" => {
-                asset_pattern_option = next_option.map(|hi| hi.to_owned());
+                asset_pattern_option = next_option.map(|next| next.to_owned());
                 i += 1
             }
 
@@ -151,27 +388,32 @@ pub fn parse_args(args: Vec<String>) -> ParsedArgs {
         i += 1;
     }
 
-    let unverified_args = UnverfiedArgs {
-        bin_path: bin_path.clone(),
-        bin_name: bin_name.clone(),
+    let basic_args = BasicArgs {
+        name: bin_name,
+        path: bin_path,
+        quiet,
+    };
+    if help {
+        return CommandMode::Help(basic_args);
+    }
+    if version {
+        return CommandMode::Version(basic_args);
+    }
+
+    let unverified_args = UnverfiedDownloadArgs {
         repository_option,
         asset_pattern_option,
         quiet,
-        help,
-        version,
     };
     let verified_args = verify_args(unverified_args);
 
-    return ParsedArgs {
-        bin_path,
-        bin_name,
+    let download_args = DownloadArgs {
         repository: verified_args.0,
         asset_pattern: verified_args.1,
         tag,
         allow_prerelease,
-        quiet,
-        help,
-        version,
         print_filename,
     };
+
+    CommandMode::Download(basic_args, download_args)
 }

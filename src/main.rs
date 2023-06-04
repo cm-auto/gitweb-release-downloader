@@ -7,7 +7,10 @@ use std::{
     process,
 };
 
-use arguments::{parse_args, ParsedArgs};
+use arguments::{
+    parse_args, print_help, print_version, AssetsQueryArgs, BasicArgs, CommandMode, DownloadArgs,
+    QueryType, ReleasesQueryArgs,
+};
 use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
 use regex::Regex;
@@ -56,6 +59,16 @@ fn find_asset<'a>(
     None
 }
 
+fn find_assets_in_release<'a>(release: &'a Release, asset_name_pattern: &Regex) -> Vec<&'a Asset> {
+    let mut matching_assets = vec![];
+    for asset in &release.assets {
+        if asset_name_pattern.is_match(&asset.name) {
+            matching_assets.push(asset);
+        }
+    }
+    matching_assets
+}
+
 fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
     let releases_address = format!("https://api.github.com/repos/{}/releases", repository);
 
@@ -88,11 +101,9 @@ fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
 
 // TODO use more functions instead of putting everything into main
 
-// TODO add a mode which shows all available assets/releases etc.
-
-fn get_compiled_asset_pattern_or_exit(parsed_args: &ParsedArgs) -> Regex {
-    Regex::new(&parsed_args.asset_pattern).unwrap_or_else(|e| {
-        if !parsed_args.quiet {
+fn get_compiled_asset_pattern_or_exit(basic_args: &BasicArgs, pattern: &str) -> Regex {
+    Regex::new(pattern).unwrap_or_else(|e| {
+        if !basic_args.quiet {
             eprintln!("Could not compile RegEx:\n{e}");
         }
 
@@ -102,7 +113,8 @@ fn get_compiled_asset_pattern_or_exit(parsed_args: &ParsedArgs) -> Regex {
 
 fn get_asset_or_exit<'a>(
     releases: &'a Vec<Release>,
-    parsed_args: &ParsedArgs,
+    basic_args: &BasicArgs,
+    parsed_args: &DownloadArgs,
     compiled_asset_pattern: &Regex,
 ) -> &'a Asset {
     let asset_option = find_asset(
@@ -113,7 +125,7 @@ fn get_asset_or_exit<'a>(
     );
 
     let Some(asset) = asset_option else{
-        if !parsed_args.quiet {
+        if !basic_args.quiet {
             eprintln!(
                 r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
                 asset_pattern = parsed_args.asset_pattern,
@@ -210,27 +222,87 @@ fn stream_response_into_file(
     }
 }
 
+fn print_releases(basic_args: &BasicArgs, releases_query_args: &ReleasesQueryArgs) {
+    let agent: Agent = ureq::AgentBuilder::new().build();
+
+    if basic_args.quiet {
+        return;
+    }
+    let releases = get_releases(&agent, &releases_query_args.repository, basic_args.quiet);
+    let releases_iter = releases.iter().take(releases_query_args.count.into());
+    for release in releases_iter {
+        println!("{}", release.tag_name);
+    }
+}
+
+fn print_assets(basic_args: &BasicArgs, assets_query_args: &AssetsQueryArgs) {
+    let agent: Agent = ureq::AgentBuilder::new().build();
+
+    if basic_args.quiet {
+        return;
+    }
+    let releases = get_releases(&agent, &assets_query_args.repository, basic_args.quiet);
+    let Some(release) = find_release(&releases, &assets_query_args.tag, true) else{
+		if !basic_args.quiet{
+			eprintln!(r#"Could not find release with tag "{}""#, assets_query_args.tag)
+		}
+		process::exit(1);
+	};
+    let regex = get_compiled_asset_pattern_or_exit(basic_args, &assets_query_args.pattern);
+    let assets = find_assets_in_release(release, &regex);
+    for asset in assets {
+        println!("{}", asset.name);
+    }
+}
+
+fn handle_query_command(basic_args: &BasicArgs, query_type: QueryType) -> ! {
+    match query_type {
+        QueryType::ReleasesQuery(releases_args) => print_releases(basic_args, &releases_args),
+        QueryType::AssetsQuery(assets_args) => print_assets(basic_args, &assets_args),
+    }
+    process::exit(0)
+}
+
 fn main() {
-    let parsed_args = parse_args(env::args().collect());
+    let command_mode = parse_args(env::args().collect());
+
+    let (basic_args, parsed_args) = match command_mode {
+        CommandMode::Help(_) => {
+            print_help();
+            process::exit(0);
+        }
+        CommandMode::Version(_) => {
+            print_version();
+            process::exit(0);
+        }
+        CommandMode::Download(basic_args, download_args) => (basic_args, download_args),
+        CommandMode::Query(basic_args, query_type) => handle_query_command(&basic_args, query_type),
+    };
 
     // TODO does the usage of quiet make sense?
     // there are only prints to stderr (progress
     // and error messages), does it even make
     // sense to suppress stderr messages?
-    let quiet = parsed_args.quiet;
+    let quiet = basic_args.quiet;
 
     // enable ansi on windows terminals
     // I think indicatif does this automatically,
     // but just to be sure:
     // TODO check if indicatif enables ansi on windows terminals
 
-    let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&parsed_args);
+    let compiled_asset_pattern =
+        get_compiled_asset_pattern_or_exit(&basic_args, &parsed_args.asset_pattern);
 
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    let releases = get_releases(&agent, &parsed_args.repository, parsed_args.quiet);
+    let releases = get_releases(&agent, &parsed_args.repository, quiet);
 
-    let asset = get_asset_or_exit(&releases, &parsed_args, &compiled_asset_pattern);
+    let asset = get_asset_or_exit(
+        &releases,
+        &basic_args,
+        &parsed_args,
+        &compiled_asset_pattern,
+    );
 
     if !quiet {
         // printing to stderr, since posix (or unix?)
