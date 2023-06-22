@@ -126,7 +126,8 @@ fn get_asset_or_exit<'a>(
 
     let Some(asset) = asset_option else{
         if !basic_args.quiet {
-            eprintln!(
+			eprintln!(
+				// TODO this error is also shown if the repository does not exist, which can be misleading
                 r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
                 asset_pattern = parsed_args.asset_pattern,
                 tag = parsed_args.tag,
@@ -315,7 +316,7 @@ fn main() {
 
     let response = make_get_request(&agent, &asset.browser_download_url).unwrap_or_else(|e| {
         if !quiet {
-            eprintln!(r#"Error downloading file:\n{e}"#);
+            eprintln!("Error downloading file:\n{e}");
         }
         process::exit(1);
     });
@@ -324,7 +325,7 @@ fn main() {
 
     let out_file = File::create(&out_filename).unwrap_or_else(|e| {
         if !quiet {
-            eprintln!(r#"Error creating file:\n{e}"#);
+            eprintln!("Error creating file:\n{e}");
         }
         process::exit(1);
     });
