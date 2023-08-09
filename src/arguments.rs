@@ -47,12 +47,14 @@ pub fn print_version() {
 // repository name etc.
 type Repository = String;
 
+#[derive(Debug, PartialEq)]
 pub struct BasicArgs {
     pub name: String,
     pub path: String,
     pub quiet: bool,
 }
 
+#[derive(Debug, PartialEq)]
 pub enum CommandMode {
     Help(BasicArgs),
     Version(BasicArgs),
@@ -60,11 +62,13 @@ pub enum CommandMode {
     Query(BasicArgs, QueryType),
 }
 
+#[derive(Debug, PartialEq)]
 pub enum QueryType {
     ReleasesQuery(ReleasesQueryArgs),
     AssetsQuery(AssetsQueryArgs),
 }
 
+#[derive(Debug, PartialEq)]
 pub struct ReleasesQueryArgs {
     pub repository: Repository,
     pub allow_prerelease: bool,
@@ -72,6 +76,7 @@ pub struct ReleasesQueryArgs {
     pub count: NonZeroUsize,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct AssetsQueryArgs {
     pub repository: Repository,
     // by default latest
@@ -80,6 +85,7 @@ pub struct AssetsQueryArgs {
     pub pattern: String,
 }
 
+#[derive(Debug, PartialEq)]
 pub struct DownloadArgs {
     pub repository: Repository,
     pub asset_pattern: String,
@@ -416,4 +422,115 @@ pub fn parse_args(args: Vec<String>) -> CommandMode {
     };
 
     CommandMode::Download(basic_args, download_args)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::num::NonZeroUsize;
+
+    use crate::arguments::{
+        parse_args, AssetsQueryArgs, BasicArgs, CommandMode, DownloadArgs, QueryType,
+        ReleasesQueryArgs,
+    };
+
+    #[test]
+    fn parse_help() {
+        let args = vec!["grd".to_string(), "--help".to_string()];
+        let mode = parse_args(args);
+        let expected = CommandMode::Help(BasicArgs {
+            name: "grd".to_string(),
+            path: "grd".to_string(),
+            quiet: false,
+        });
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_version() {
+        let args = vec!["grd".to_string(), "--version".to_string()];
+        let mode = parse_args(args);
+        let expected = CommandMode::Version(BasicArgs {
+            name: "grd".to_string(),
+            path: "grd".to_string(),
+            quiet: false,
+        });
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_query_default_download() {
+        let args = vec![
+            "grd".to_string(),
+            "-r".to_string(),
+            "cm-auto/gitweb-release-downloader".to_string(),
+            "-a".to_string(),
+            ".*".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Download(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            DownloadArgs {
+                repository: "cm-auto/gitweb-release-downloader".to_string(),
+                asset_pattern: ".*".to_string(),
+                tag: "latest".to_string(),
+                allow_prerelease: false,
+                print_filename: false,
+            },
+        );
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_query_releases() {
+        let args = vec![
+            "grd".to_string(),
+            "query".to_string(),
+            "releases".to_string(),
+            "-r".to_string(),
+            "cm-auto/gitweb-release-downloader".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Query(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            QueryType::ReleasesQuery(ReleasesQueryArgs {
+                repository: "cm-auto/gitweb-release-downloader".to_string(),
+                count: NonZeroUsize::new(1).unwrap(),
+                allow_prerelease: false,
+            }),
+        );
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_query_assets() {
+        let args = vec![
+            "grd".to_string(),
+            "query".to_string(),
+            "assets".to_string(),
+            "-r".to_string(),
+            "cm-auto/gitweb-release-downloader".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Query(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            QueryType::AssetsQuery(AssetsQueryArgs {
+                repository: "cm-auto/gitweb-release-downloader".to_string(),
+                tag: "latest".to_string(),
+                pattern: ".*".to_string(),
+            }),
+        );
+        assert_eq!(mode, expected);
+    }
 }
