@@ -9,7 +9,7 @@ use std::{
 
 use arguments::{
     parse_args, print_help, print_version, AssetsQueryArgs, BasicArgs, CommandMode, DownloadArgs,
-    QueryType, ReleasesQueryArgs,
+    GitWebsite, QueryType, ReleasesQueryArgs, Repository,
 };
 use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
@@ -69,8 +69,19 @@ fn find_assets_in_release<'a>(release: &'a Release, asset_name_pattern: &Regex) 
     matching_assets
 }
 
-fn get_releases(agent: &Agent, repository: &str, quiet: bool) -> Vec<Release> {
-    let releases_address = format!("https://api.github.com/repos/{}/releases", repository);
+fn get_releases_api_url(repository: &Repository) -> String {
+    match repository.website {
+        GitWebsite::GitHub => {
+            format!(
+                "https://api.github.com/repos/{}/{}/releases",
+                repository.owner, repository.name
+            )
+        }
+    }
+}
+
+fn get_releases(agent: &Agent, repository: &Repository, quiet: bool) -> Vec<Release> {
+    let releases_address = get_releases_api_url(repository);
 
     let response = make_get_request(agent, &releases_address).unwrap_or_else(|e| {
         if !quiet {
@@ -131,7 +142,7 @@ fn get_asset_or_exit<'a>(
                 r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
                 asset_pattern = parsed_args.asset_pattern,
                 tag = parsed_args.tag,
-                repository = parsed_args.repository,
+                repository = parsed_args.repository.passed_string,
             );
         }
         process::exit(1);

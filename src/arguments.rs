@@ -1,5 +1,7 @@
 use std::{num::NonZeroUsize, path, process};
 
+use regex::Regex;
+
 pub fn print_help() {
     println!(
         r#"Download GitHub release assets
@@ -45,7 +47,20 @@ pub fn print_version() {
 // a struct, which contains website,
 // author/organization name and
 // repository name etc.
-type Repository = String;
+// type Repository = String;
+
+#[derive(Debug, PartialEq)]
+pub enum GitWebsite {
+    GitHub,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct Repository {
+    pub website: GitWebsite,
+    pub owner: String,
+    pub name: String,
+    pub passed_string: String,
+}
 
 #[derive(Debug, PartialEq)]
 pub struct BasicArgs {
@@ -104,17 +119,70 @@ struct UnverfiedDownloadArgs {
     quiet: bool,
 }
 
-// TODO this should return an Error (Result) instead of exiting
-fn verify_args(unverified_args: UnverfiedDownloadArgs) -> (String, String) {
-    // TODO if the full link is supplied strip everything
-    // that is not the repository
-    if unverified_args.repository_option.is_none() {
-        if !unverified_args.quiet {
-            eprintln!(r#"You must supply a value for repository"#);
-            print_help();
-        }
-        process::exit(1);
+fn parse_repository(repository_string: &str) -> Result<Option<Repository>, regex::Error> {
+    // since this function will only be called once
+    // during the lifetime of the program, the regex pattern
+    // will not be cached
+    // when the parsing of the arguments were first implemented
+
+    // only specifying the owner and name were enough and was assumed
+    // to be on GitHub, which is why in this case not specifying
+    // the website is allowed
+    // however later it may be possible that there will be an argument that forces
+    // the website to use, because self hosted website can't be guessed from the name
+    // and this needs to be addressed then
+    let github_pattern =
+        Regex::new(r"^((https?://)?github.com/)?(?P<owner>[^/]+)/(?P<name>[^/]+)$")?;
+    let captures_option = github_pattern.captures(repository_string);
+    if let Some(captures) = captures_option {
+        return Ok(Some(Repository {
+            website: GitWebsite::GitHub,
+            owner: captures["owner"].to_string(),
+            name: captures["name"].to_string(),
+            passed_string: repository_string.to_string(),
+        }));
     }
+    Ok(None)
+}
+
+fn string_option_to_repository_or_exit(string_option: Option<String>, quiet: bool) -> Repository {
+    let repository_string = match string_option {
+        Some(s) => s,
+        None => {
+            if !quiet {
+                eprintln!(r#"You must supply a value for repository"#);
+                print_help();
+            }
+            process::exit(1);
+        }
+    };
+    let repository = match parse_repository(&repository_string) {
+        Err(e) => {
+            if !quiet {
+                eprintln!("Could not parse repository: {}", e);
+            }
+            process::exit(1);
+        }
+        Ok(r) if r.is_none() => {
+            if !quiet {
+                eprintln!(
+                    "The supplied website is not supported: {}",
+                    repository_string
+                );
+            }
+            process::exit(1);
+        }
+        Ok(r) => r.unwrap(),
+    };
+    repository
+}
+
+// TODO this should return an Error (Result) instead of exiting
+fn verify_args(unverified_args: UnverfiedDownloadArgs) -> (Repository, String) {
+    let repository = string_option_to_repository_or_exit(
+        unverified_args.repository_option,
+        unverified_args.quiet,
+    );
 
     if unverified_args.asset_pattern_option.is_none() {
         if !unverified_args.quiet {
@@ -124,10 +192,7 @@ fn verify_args(unverified_args: UnverfiedDownloadArgs) -> (String, String) {
         process::exit(1);
     }
 
-    return (
-        unverified_args.repository_option.unwrap(),
-        unverified_args.asset_pattern_option.unwrap(),
-    );
+    return (repository, unverified_args.asset_pattern_option.unwrap());
 }
 
 fn parse_query_releases_args(bin_path: String, bin_name: String, args: &[String]) -> CommandMode {
@@ -202,11 +267,7 @@ fn parse_query_releases_args(bin_path: String, bin_name: String, args: &[String]
         return CommandMode::Version(basic_args);
     }
 
-    let Some(repository) = repository_option else{
-        eprintln!(r#"You must supply a value for repository"#);
-        print_help();
-        process::exit(1);
-    };
+    let repository = string_option_to_repository_or_exit(repository_option, quiet);
 
     CommandMode::Query(
         basic_args,
@@ -287,11 +348,7 @@ fn parse_query_assets_args(bin_path: String, bin_name: String, args: &[String]) 
         return CommandMode::Version(basic_args);
     }
 
-    let Some(repository) = repository_option else{
-        eprintln!(r#"You must supply a value for repository"#);
-        print_help();
-        process::exit(1);
-    };
+    let repository = string_option_to_repository_or_exit(repository_option, quiet);
 
     CommandMode::Query(
         basic_args,
@@ -429,8 +486,8 @@ mod tests {
     use std::num::NonZeroUsize;
 
     use crate::arguments::{
-        parse_args, AssetsQueryArgs, BasicArgs, CommandMode, DownloadArgs, QueryType,
-        ReleasesQueryArgs,
+        parse_args, AssetsQueryArgs, BasicArgs, CommandMode, DownloadArgs, GitWebsite, QueryType,
+        ReleasesQueryArgs, Repository,
     };
 
     #[test]
@@ -474,7 +531,12 @@ mod tests {
                 quiet: false,
             },
             DownloadArgs {
-                repository: "cm-auto/gitweb-release-downloader".to_string(),
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "cm-auto/gitweb-release-downloader".to_string(),
+                },
                 asset_pattern: ".*".to_string(),
                 tag: "latest".to_string(),
                 allow_prerelease: false,
@@ -501,7 +563,12 @@ mod tests {
                 quiet: false,
             },
             QueryType::ReleasesQuery(ReleasesQueryArgs {
-                repository: "cm-auto/gitweb-release-downloader".to_string(),
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "cm-auto/gitweb-release-downloader".to_string(),
+                },
                 count: NonZeroUsize::new(1).unwrap(),
                 allow_prerelease: false,
             }),
@@ -526,10 +593,145 @@ mod tests {
                 quiet: false,
             },
             QueryType::AssetsQuery(AssetsQueryArgs {
-                repository: "cm-auto/gitweb-release-downloader".to_string(),
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "cm-auto/gitweb-release-downloader".to_string(),
+                },
                 tag: "latest".to_string(),
                 pattern: ".*".to_string(),
             }),
+        );
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_repository_only_repository_is_github() {
+        let args = vec![
+            "grd".to_string(),
+            "-r".to_string(),
+            "cm-auto/gitweb-release-downloader".to_string(),
+            "-a".to_string(),
+            ".*".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Download(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            DownloadArgs {
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "cm-auto/gitweb-release-downloader".to_string(),
+                },
+                asset_pattern: ".*".to_string(),
+                tag: "latest".to_string(),
+                allow_prerelease: false,
+                print_filename: false,
+            },
+        );
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_repository_github_and_repository_is_github() {
+        let args = vec![
+            "grd".to_string(),
+            "-r".to_string(),
+            "github.com/cm-auto/gitweb-release-downloader".to_string(),
+            "-a".to_string(),
+            ".*".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Download(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            DownloadArgs {
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "github.com/cm-auto/gitweb-release-downloader".to_string(),
+                },
+                asset_pattern: ".*".to_string(),
+                tag: "latest".to_string(),
+                allow_prerelease: false,
+                print_filename: false,
+            },
+        );
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_repository_http_github_and_repository_is_github() {
+        let args = vec![
+            "grd".to_string(),
+            "-r".to_string(),
+            "http://github.com/cm-auto/gitweb-release-downloader".to_string(),
+            "-a".to_string(),
+            ".*".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Download(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            DownloadArgs {
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "http://github.com/cm-auto/gitweb-release-downloader"
+                        .to_string(),
+                },
+                asset_pattern: ".*".to_string(),
+                tag: "latest".to_string(),
+                allow_prerelease: false,
+                print_filename: false,
+            },
+        );
+        assert_eq!(mode, expected);
+    }
+
+    #[test]
+    fn parse_repository_https_github_and_repository_is_github() {
+        let args = vec![
+            "grd".to_string(),
+            "-r".to_string(),
+            "https://github.com/cm-auto/gitweb-release-downloader".to_string(),
+            "-a".to_string(),
+            ".*".to_string(),
+        ];
+        let mode = parse_args(args);
+        let expected = CommandMode::Download(
+            BasicArgs {
+                name: "grd".to_string(),
+                path: "grd".to_string(),
+                quiet: false,
+            },
+            DownloadArgs {
+                repository: Repository {
+                    website: GitWebsite::GitHub,
+                    owner: "cm-auto".to_string(),
+                    name: "gitweb-release-downloader".to_string(),
+                    passed_string: "https://github.com/cm-auto/gitweb-release-downloader"
+                        .to_string(),
+                },
+                asset_pattern: ".*".to_string(),
+                tag: "latest".to_string(),
+                allow_prerelease: false,
+                print_filename: false,
+            },
         );
         assert_eq!(mode, expected);
     }
