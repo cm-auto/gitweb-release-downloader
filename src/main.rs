@@ -43,14 +43,7 @@ fn find_asset<'a>(
     allow_prerelease: bool,
     asset_name_pattern: &Regex,
 ) -> Option<&'a Asset> {
-    let release_option = find_release(releases, tag, allow_prerelease);
-    if release_option.is_none() {
-        return None;
-    }
-    let release = match release_option {
-        None => return None,
-        Some(release) => release,
-    };
+    let release = find_release(releases, tag, allow_prerelease)?;
     for asset in &release.assets {
         if asset_name_pattern.is_match(&asset.name) {
             return Some(asset);
@@ -135,10 +128,10 @@ fn get_asset_or_exit<'a>(
         compiled_asset_pattern,
     );
 
-    let Some(asset) = asset_option else{
+    let Some(asset) = asset_option else {
         if !basic_args.quiet {
-			eprintln!(
-				// TODO this error is also shown if the repository does not exist, which can be misleading
+            eprintln!(
+                // TODO this error is also shown if the repository does not exist, which can be misleading
                 r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
                 asset_pattern = parsed_args.asset_pattern,
                 tag = parsed_args.tag,
@@ -241,7 +234,10 @@ fn print_releases(basic_args: &BasicArgs, releases_query_args: &ReleasesQueryArg
         return;
     }
     let releases = get_releases(&agent, &releases_query_args.repository, basic_args.quiet);
-    let releases_iter = releases.iter().take(releases_query_args.count.into());
+    let releases_iter = releases
+        .iter()
+        .filter(|release| !release.prerelease || releases_query_args.allow_prerelease)
+        .take(releases_query_args.count.into());
     for release in releases_iter {
         println!("{}", release.tag_name);
     }
@@ -254,12 +250,15 @@ fn print_assets(basic_args: &BasicArgs, assets_query_args: &AssetsQueryArgs) {
         return;
     }
     let releases = get_releases(&agent, &assets_query_args.repository, basic_args.quiet);
-    let Some(release) = find_release(&releases, &assets_query_args.tag, true) else{
-		if !basic_args.quiet{
-			eprintln!(r#"Could not find release with tag "{}""#, assets_query_args.tag)
-		}
-		process::exit(1);
-	};
+    let Some(release) = find_release(&releases, &assets_query_args.tag, true) else {
+        if !basic_args.quiet {
+            eprintln!(
+                r#"Could not find release with tag "{}""#,
+                assets_query_args.tag
+            )
+        }
+        process::exit(1);
+    };
     let regex = get_compiled_asset_pattern_or_exit(basic_args, &assets_query_args.pattern);
     let assets = find_assets_in_release(release, &regex);
     for asset in assets {
