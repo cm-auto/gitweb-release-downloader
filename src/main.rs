@@ -17,10 +17,10 @@ use regex::Regex;
 use ureq::{Agent, Response};
 
 // GitHub requires the usage of a user agent
-const USERAGENT: &'static str = "gitweb-release-downloader";
+const USERAGENT: &str = "gitweb-release-downloader";
 
 fn find_release<'a>(
-    releases: &'a Vec<Release>,
+    releases: &'a [Release],
     tag: &str,
     allow_prerelease: bool,
 ) -> Option<&'a Release> {
@@ -34,22 +34,20 @@ fn find_release<'a>(
             return Some(release);
         }
     }
-    return None;
+    None
 }
 
 fn find_asset<'a>(
-    releases: &'a Vec<Release>,
+    releases: &'a [Release],
     tag: &str,
     allow_prerelease: bool,
     asset_name_pattern: &Regex,
 ) -> Option<&'a Asset> {
     let release = find_release(releases, tag, allow_prerelease)?;
-    for asset in &release.assets {
-        if asset_name_pattern.is_match(&asset.name) {
-            return Some(asset);
-        }
-    }
-    None
+    release
+        .assets
+        .iter()
+        .find(|&asset| asset_name_pattern.is_match(&asset.name))
 }
 
 fn find_assets_in_release<'a>(release: &'a Release, asset_name_pattern: &Regex) -> Vec<&'a Asset> {
@@ -90,14 +88,12 @@ fn get_releases(agent: &Agent, repository: &Repository, quiet: bool) -> Vec<Rele
         process::exit(1);
     });
 
-    let releases =
-        serde_json::from_str::<Vec<Release>>(&releases_json_string).unwrap_or_else(|e| {
-            if !quiet {
-                eprintln!("Could not deserialize json:\n{e}");
-            }
-            process::exit(1);
-        });
-    return releases;
+    serde_json::from_str::<Vec<Release>>(&releases_json_string).unwrap_or_else(|e| {
+        if !quiet {
+            eprintln!("Could not deserialize json:\n{e}");
+        }
+        process::exit(1);
+    })
 }
 
 // TODO create error enum with type of errors
@@ -116,7 +112,7 @@ fn get_compiled_asset_pattern_or_exit(basic_args: &BasicArgs, pattern: &str) -> 
 }
 
 fn get_asset_or_exit<'a>(
-    releases: &'a Vec<Release>,
+    releases: &'a [Release],
     basic_args: &BasicArgs,
     parsed_args: &DownloadArgs,
     compiled_asset_pattern: &Regex,
@@ -144,10 +140,10 @@ fn get_asset_or_exit<'a>(
     asset
 }
 
-fn make_get_request(agent: &Agent, url: &str) -> Result<Response, ureq::Error> {
+fn make_get_request(agent: &Agent, url: &str) -> Result<Response, Box<ureq::Error>> {
     let request = agent.get(url).set("user-agent", USERAGENT);
 
-    request.call()
+    request.call().map_err(Box::new)
 }
 
 fn get_content_length(response: &Response) -> Option<usize> {
@@ -174,10 +170,7 @@ fn create_progress_bar(content_length: usize) -> ProgressBar {
 }
 
 fn create_and_init_progress_bar(content_length_option: Option<usize>) -> Option<ProgressBar> {
-    if content_length_option.is_none() {
-        return None;
-    }
-    let content_length = content_length_option.unwrap();
+    let content_length = content_length_option?;
     let pb = create_progress_bar(content_length);
     pb.set_position(0);
     Some(pb)
@@ -333,7 +326,7 @@ fn main() {
 
     let out_filename = &asset.name;
 
-    let out_file = File::create(&out_filename).unwrap_or_else(|e| {
+    let out_file = File::create(out_filename).unwrap_or_else(|e| {
         if !quiet {
             eprintln!("Error creating file:\n{e}");
         }
