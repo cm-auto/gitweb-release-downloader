@@ -1,16 +1,11 @@
 mod arguments;
 mod models;
 use std::{
-    env,
     fs::File,
     io::{stderr, Write},
-    process,
+    process::{self, exit},
 };
 
-use arguments::{
-    parse_args, print_help, print_version, AssetsQueryArgs, BasicArgs, CommandMode, DownloadArgs,
-    GitWebsite, QueryType, ReleasesQueryArgs, Repository,
-};
 use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
 use regex::Regex;
@@ -21,7 +16,7 @@ const USERAGENT: &str = "gitweb-release-downloader";
 
 fn find_release<'a>(
     releases: &'a [Release],
-    tag: &str,
+    tag: Option<&str>,
     allow_prerelease: bool,
 ) -> Option<&'a Release> {
     for release in releases {
@@ -30,8 +25,13 @@ fn find_release<'a>(
         }
         // if tag is latest take the first, which is
         // the latest
-        if release.tag_name == tag || tag == "latest" {
-            return Some(release);
+        match tag {
+            None => return Some(release),
+            Some(tag) => {
+                if release.tag_name == tag {
+                    return Some(release);
+                }
+            }
         }
     }
     None
@@ -39,7 +39,7 @@ fn find_release<'a>(
 
 fn find_asset<'a>(
     releases: &'a [Release],
-    tag: &str,
+    tag: Option<&str>,
     allow_prerelease: bool,
     asset_name_pattern: &Regex,
 ) -> Option<&'a Asset> {
@@ -60,9 +60,9 @@ fn find_assets_in_release<'a>(release: &'a Release, asset_name_pattern: &Regex) 
     matching_assets
 }
 
-fn get_releases_api_url(repository: &Repository) -> String {
+fn get_releases_api_url(repository: &arguments::Repository) -> String {
     match repository.website {
-        GitWebsite::GitHub => {
+        arguments::GitWebsite::GitHub => {
             format!(
                 "https://api.github.com/repos/{}/{}/releases",
                 repository.owner, repository.name
@@ -71,7 +71,7 @@ fn get_releases_api_url(repository: &Repository) -> String {
     }
 }
 
-fn get_releases(agent: &Agent, repository: &Repository, quiet: bool) -> Vec<Release> {
+fn get_releases(agent: &Agent, repository: &arguments::Repository, quiet: bool) -> Vec<Release> {
     let releases_address = get_releases_api_url(repository);
 
     let response = make_get_request(agent, &releases_address).unwrap_or_else(|e| {
@@ -101,9 +101,9 @@ fn get_releases(agent: &Agent, repository: &Repository, quiet: bool) -> Vec<Rele
 
 // TODO use more functions instead of putting everything into main
 
-fn get_compiled_asset_pattern_or_exit(basic_args: &BasicArgs, pattern: &str) -> Regex {
+fn get_compiled_asset_pattern_or_exit(quiet: bool, pattern: &str) -> Regex {
     Regex::new(pattern).unwrap_or_else(|e| {
-        if !basic_args.quiet {
+        if !quiet {
             eprintln!("Could not compile RegEx:\n{e}");
         }
 
@@ -113,24 +113,27 @@ fn get_compiled_asset_pattern_or_exit(basic_args: &BasicArgs, pattern: &str) -> 
 
 fn get_asset_or_exit<'a>(
     releases: &'a [Release],
-    basic_args: &BasicArgs,
-    parsed_args: &DownloadArgs,
+    quiet: bool,
+    parsed_args: &arguments::DownloadArgs,
     compiled_asset_pattern: &Regex,
 ) -> &'a Asset {
     let asset_option = find_asset(
         releases,
-        &parsed_args.tag,
+        parsed_args.tag.as_deref(),
         parsed_args.allow_prerelease,
         compiled_asset_pattern,
     );
 
     let Some(asset) = asset_option else {
-        if !basic_args.quiet {
+        if !quiet {
+            let tag_string = match &parsed_args.tag {
+                Some(tag) => format!("tag \"{tag}\""),
+                None => "latest tag".to_string(),
+            };
             eprintln!(
                 // TODO this error is also shown if the repository does not exist, which can be misleading
-                r#"Could not find Pattern "{asset_pattern}" in Tag "{tag}" in releases of repository "{repository}""#,
+                r#"Could not find Pattern "{asset_pattern}" in {tag_string} in releases of repository "{repository}""#,
                 asset_pattern = parsed_args.asset_pattern,
-                tag = parsed_args.tag,
                 repository = parsed_args.repository.passed_string,
             );
         }
@@ -220,13 +223,14 @@ fn stream_response_into_file(
     }
 }
 
-fn print_releases(basic_args: &BasicArgs, releases_query_args: &ReleasesQueryArgs) {
+fn print_releases(quiet: bool, releases_query_args: arguments::ReleasesQueryArgs) {
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    if basic_args.quiet {
+    if quiet {
         return;
     }
-    let releases = get_releases(&agent, &releases_query_args.repository, basic_args.quiet);
+    let repository: arguments::Repository = releases_query_args.repository;
+    let releases = get_releases(&agent, &repository, quiet);
     let releases_iter = releases
         .iter()
         .filter(|release| !release.prerelease || releases_query_args.allow_prerelease)
@@ -236,58 +240,44 @@ fn print_releases(basic_args: &BasicArgs, releases_query_args: &ReleasesQueryArg
     }
 }
 
-fn print_assets(basic_args: &BasicArgs, assets_query_args: &AssetsQueryArgs) {
+fn print_assets(quiet: bool, assets_query_args: arguments::AssetsQueryArgs) {
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    if basic_args.quiet {
+    if quiet {
         return;
     }
-    let releases = get_releases(&agent, &assets_query_args.repository, basic_args.quiet);
-    let Some(release) = find_release(&releases, &assets_query_args.tag, true) else {
-        if !basic_args.quiet {
-            eprintln!(
-                r#"Could not find release with tag "{}""#,
-                assets_query_args.tag
-            )
+    let releases = get_releases(&agent, &assets_query_args.repository, quiet);
+    let Some(release) = find_release(&releases, assets_query_args.tag.as_deref(), true) else {
+        match &assets_query_args.tag {
+            Some(tag) => eprintln!("Could not find release with tag \"{tag}\""),
+            None => eprintln!("Could not find latest tag"),
         }
         process::exit(1);
     };
-    let regex = get_compiled_asset_pattern_or_exit(basic_args, &assets_query_args.pattern);
+    let regex = get_compiled_asset_pattern_or_exit(quiet, &assets_query_args.pattern);
     let assets = find_assets_in_release(release, &regex);
     for asset in assets {
         println!("{}", asset.name);
     }
 }
 
-fn handle_query_command(basic_args: &BasicArgs, query_type: QueryType) -> ! {
-    match query_type {
-        QueryType::ReleasesQuery(releases_args) => print_releases(basic_args, &releases_args),
-        QueryType::AssetsQuery(assets_args) => print_assets(basic_args, &assets_args),
-    }
-    process::exit(0)
-}
-
 fn main() {
-    let command_mode = parse_args(env::args().collect());
+    let args = arguments::parse_arguments();
+    let quiet = args.quiet;
 
-    let (basic_args, parsed_args) = match command_mode {
-        CommandMode::Help(_) => {
-            print_help();
-            process::exit(0);
-        }
-        CommandMode::Version(_) => {
-            print_version();
-            process::exit(0);
-        }
-        CommandMode::Download(basic_args, download_args) => (basic_args, download_args),
-        CommandMode::Query(basic_args, query_type) => handle_query_command(&basic_args, query_type),
+    let parsed_args = match args.command_mode {
+        arguments::CommandMode::Query(query_args) => match query_args.query_type {
+            arguments::QueryType::Releases(releases_query_args) => {
+                print_releases(quiet, releases_query_args);
+                exit(0);
+            }
+            arguments::QueryType::Assets(assets_query_args) => {
+                print_assets(quiet, assets_query_args);
+                exit(0);
+            }
+        },
+        arguments::CommandMode::Download(download_args) => download_args,
     };
-
-    // TODO does the usage of quiet make sense?
-    // there are only prints to stderr (progress
-    // and error messages), does it even make
-    // sense to suppress stderr messages?
-    let quiet = basic_args.quiet;
 
     // enable ansi on windows terminals
     // I think indicatif does this automatically,
@@ -295,18 +285,13 @@ fn main() {
     // TODO check if indicatif enables ansi on windows terminals
 
     let compiled_asset_pattern =
-        get_compiled_asset_pattern_or_exit(&basic_args, &parsed_args.asset_pattern);
+        get_compiled_asset_pattern_or_exit(quiet, &parsed_args.asset_pattern);
 
     let agent: Agent = ureq::AgentBuilder::new().build();
 
     let releases = get_releases(&agent, &parsed_args.repository, quiet);
 
-    let asset = get_asset_or_exit(
-        &releases,
-        &basic_args,
-        &parsed_args,
-        &compiled_asset_pattern,
-    );
+    let asset = get_asset_or_exit(&releases, quiet, &parsed_args, &compiled_asset_pattern);
 
     if !quiet {
         // printing to stderr, since posix (or unix?)
