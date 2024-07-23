@@ -124,7 +124,7 @@ pub struct ReleasesQueryArgs {
     pub repository: Repository,
     #[clap(
         short = 'p',
-        long = "prelease",
+        long = "prerelease",
         default_value_t = false,
         help = "Include prereleases"
     )]
@@ -146,7 +146,7 @@ pub struct AssetsQueryArgs {
     #[clap(
         short = 't',
         long = "tag",
-        help = "Tag of the release\nIf omitted latest tag will be used"
+        help = "Tag of the release\nIf omitted latest (non prerelease) tag will be used"
     )]
     pub tag: Option<String>,
     // ".*" means all assets

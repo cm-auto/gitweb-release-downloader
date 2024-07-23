@@ -230,7 +230,16 @@ fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
     let agent: Agent = ureq::AgentBuilder::new().build();
 
     let releases = get_releases(&agent, &assets_query_args.repository);
-    let Some(release) = find_release(&releases, assets_query_args.tag.as_deref(), true) else {
+    // if no tag is specified, prereleases are not allowed
+    // however if a tag is specified, the user explictly chose
+    // a tag that might be a prerelease, so in this case it
+    // will be allowed
+    let allow_prerelease = assets_query_args.tag.is_some();
+    let Some(release) = find_release(
+        &releases,
+        assets_query_args.tag.as_deref(),
+        allow_prerelease,
+    ) else {
         match &assets_query_args.tag {
             Some(tag) => eprintln!("Could not find release with tag \"{tag}\""),
             None => eprintln!("Could not find latest tag"),

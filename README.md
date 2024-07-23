@@ -1,6 +1,7 @@
 # gitweb-release-downloader
 
-Allows you to download release assets from (currently only) GitHub.
+Allows you to download release assets from (currently only) GitHub.\
+Additionally you can query a repository's releases and their respective assets.
 
 ## Usage
 
@@ -16,10 +17,10 @@ Alternatively
 grd download --website-type github "VSCodium/vscodium" "\\.deb$"
 ```
 
-`--repository` takes the owner and name of the repository\
+First arguments is the repository\
+Second argument is a regex pattern for the asset to download\
 `--website-type` takes the type of git website (if this is omitted, the program
-tries to guess it from the passed repository)\
-`--asset-pattern` takes a regex pattern for the asset to download
+tries to guess it from the passed repository)
 
 It automatically takes the latest release, which is not a prerelease.\
 Alternatively it takes a tag to download with `--tag`.\
@@ -33,3 +34,24 @@ This for example allows automatic installation:
 filename=$(grd download "github.com/VSCodium/vscodium" "\\.deb$" --print-filename)
 sudo apt install "./$filename" && rm "$filename"
 ```
+
+To query releases of a repository
+
+```bash
+grd query releases "github.com/VSCodium/vscodium"
+```
+
+By default it will only print the latest release, which is not a prerelease.\
+You can change this with the `--count` and `--prerelease` flag.
+
+To query assets of a repository
+
+```bash
+grd query assets "github.com/VSCodium/vscodium"
+```
+
+By default this will print all assets of the latest release, which is not a
+prerelease.\
+To query from a specific release you can use the `--tag` flag (including
+prereleases).\
+Limiting the assets to show is done with the `--asset-pattern` flag.
