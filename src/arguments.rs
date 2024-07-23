@@ -3,6 +3,8 @@ use std::{fmt::Display, num::NonZeroUsize};
 use clap::{Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 use regex::Regex;
 
+// TODO create error enum with type of errors and display them on --help
+
 #[derive(Parser)]
 #[clap(version)]
 pub struct Arguments {

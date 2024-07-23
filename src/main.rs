@@ -91,11 +91,6 @@ fn get_releases(agent: &Agent, repository: &arguments::Repository) -> Vec<Releas
     })
 }
 
-// TODO create error enum with type of errors
-// so we can exit the program with the respective error code
-
-// TODO use more functions instead of putting everything into main
-
 fn get_compiled_asset_pattern_or_exit(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap_or_else(|e| {
         eprintln!("Could not compile RegEx:\n{e}");
@@ -146,16 +141,12 @@ fn get_content_length(response: &Response) -> Option<usize> {
 
 fn create_progress_bar(content_length: usize) -> ProgressBar {
     let pb = ProgressBar::new(content_length as u64);
-    let pb_style =
-    // ProgressStyle::with_template("{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes} ({eta})")
-    ProgressStyle::with_template(
+    let pb_style = ProgressStyle::with_template(
         "{spinner:.green} [{elapsed_precise}] [{wide_bar:.green/red}] {bytes}/{total_bytes}",
     )
-    // TODO I suppose this hard coded template will always succeed compiling,
-    // so it's okay to unwrap, however check that
+    // this hard coded template will always succeed compiling,
+    // so it's okay to unwrap
     .unwrap()
-    // this causes a compiler bug
-    // .with_key("eta", |state: &ProgressState, w: &mut dyn Write| write!(w, "{:.1}s", state.eta().as_secs_f64()).unwrap())
     .progress_chars("=>-");
     pb.set_style(pb_style);
     pb
@@ -186,7 +177,7 @@ fn stream_response_into_file(
             Err(error) => {
                 // can we even properly handle the potential error
                 // of writeln! ?
-                // If it fails we can't notify the use anyway
+                // If it fails we can't notify the user anyway
                 writeln!(stderr_locked, "Error reading stream:\n{error}").unwrap();
                 process::exit(1);
             }
@@ -203,7 +194,6 @@ fn stream_response_into_file(
 
                 bytes_downloaded += read_size;
 
-                // TODO where is pb actually writing, too?
                 if let Some(ref pb) = pb_option {
                     pb.set_position(bytes_downloaded as u64);
                 }
@@ -253,35 +243,14 @@ fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
     }
 }
 
-fn main() {
-    let args = arguments::Arguments::parse();
-
-    let parsed_args = match args.command_mode {
-        arguments::CommandMode::Query(query_args) => match query_args.query_type {
-            arguments::QueryType::Releases(releases_query_args) => {
-                print_releases(releases_query_args);
-                exit(0);
-            }
-            arguments::QueryType::Assets(assets_query_args) => {
-                print_assets(assets_query_args);
-                exit(0);
-            }
-        },
-        arguments::CommandMode::Download(download_args) => download_args,
-    };
-
-    // enable ansi on windows terminals
-    // I think indicatif does this automatically,
-    // but just to be sure:
-    // TODO check if indicatif enables ansi on windows terminals
-
-    let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&parsed_args.asset_pattern);
+fn download_assets(download_args: arguments::DownloadArgs) {
+    let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&download_args.asset_pattern);
 
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    let releases = get_releases(&agent, &parsed_args.repository);
+    let releases = get_releases(&agent, &download_args.repository);
 
-    let asset = get_asset_or_exit(&releases, &parsed_args, &compiled_asset_pattern);
+    let asset = get_asset_or_exit(&releases, &download_args, &compiled_asset_pattern);
 
     // printing to stderr, since posix (or unix?)
     // says progress is written to stderr
@@ -315,7 +284,28 @@ fn main() {
     }
 
     eprintln!(r#"Successfully wrote to file "{}""#, &out_filename);
-    if parsed_args.print_filename {
+    if download_args.print_filename {
         print!(r#"{}"#, &out_filename)
     }
+}
+
+fn main() {
+    let args = arguments::Arguments::parse();
+
+    match args.command_mode {
+        arguments::CommandMode::Query(query_args) => match query_args.query_type {
+            arguments::QueryType::Releases(releases_query_args) => {
+                print_releases(releases_query_args);
+                exit(0);
+            }
+            arguments::QueryType::Assets(assets_query_args) => {
+                print_assets(assets_query_args);
+                exit(0);
+            }
+        },
+        arguments::CommandMode::Download(download_args) => {
+            download_assets(download_args);
+            exit(0);
+        }
+    };
 }
