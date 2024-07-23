@@ -23,8 +23,6 @@ pub struct DownloadArgs {
     #[clap(flatten)]
     pub repository: Repository,
     #[clap(
-        short = 'a',
-        long = "asset-pattern",
         help = "Regex pattern of the asset to download\nIf pattern matches multiple assets, the first matching will be downloaded"
     )]
     pub asset_pattern: String,
@@ -175,7 +173,7 @@ pub enum GitWebsite {
 struct RepositoryArguments {
     // if website type and maybe sub path (depending on the website type) are specified
     // this does not need to be the full url
-    #[clap(short = 'r', long = "repository", help = "Repository url")]
+    #[clap(help = "Repository url")]
     pub repository: String,
     #[clap(
         short = 'w',
