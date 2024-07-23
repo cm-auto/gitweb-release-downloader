@@ -6,6 +6,7 @@ use std::{
     process::{self, exit},
 };
 
+use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
 use regex::Regex;
@@ -244,7 +245,7 @@ fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
 }
 
 fn main() {
-    let args = arguments::parse_arguments();
+    let args = arguments::Arguments::parse();
 
     let parsed_args = match args.command_mode {
         arguments::CommandMode::Query(query_args) => match query_args.query_type {

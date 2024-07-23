@@ -4,64 +4,17 @@ use clap::{Args, FromArgMatches, Parser, Subcommand, ValueEnum};
 use regex::Regex;
 
 #[derive(Parser)]
-#[clap(args_conflicts_with_subcommands = true, version)]
-struct ArgumentsPrivate {
-    #[clap(subcommand)]
-    command_mode: Option<CommandMode>,
-    // this is always None. It seems like flattening an Option struct,
-    // which contains a flatten itself is not possible.
-    // The reason this is still here is that the help message includes
-    // the arguments of download, if no subcommand is specified.
-    #[clap(flatten)]
-    download: Option<DownloadArgs>,
-}
-
-impl ArgumentsPrivate {
-    pub fn command_mode(self) -> CommandMode {
-        match self.command_mode {
-            Some(args) => args,
-            None => CommandMode::Download(self.download.unwrap()),
-        }
-    }
-}
-
+#[clap(version)]
 pub struct Arguments {
+    #[clap(subcommand)]
     pub command_mode: CommandMode,
-}
-
-impl From<ArgumentsPrivate> for Arguments {
-    fn from(val: ArgumentsPrivate) -> Self {
-        Arguments {
-            command_mode: val.command_mode(),
-        }
-    }
-}
-
-// see ArgumentsPrivate to find out why the "download" subcommand is inserted,
-// if no subcommand is specified
-pub fn parse_arguments() -> Arguments {
-    let mut args_raw = std::env::args().collect::<Vec<_>>();
-    if args_raw.len() > 2 {
-        let first_arg = &args_raw[1];
-        match first_arg.as_str() {
-            // if the first argument is already a command, do nothing
-            "download" | "query" 
-            // do not insert if the first argument is any of the following
-            | "help" | "--help" | "-h" | "--version" | "-V" => {}
-            _ => {
-                args_raw.insert(1, "download".to_string());
-            }
-        }
-    }
-
-    ArgumentsPrivate::parse_from(args_raw).into()
 }
 
 #[derive(Subcommand)]
 pub enum CommandMode {
-    #[clap(about = "Mode to download an asset (default if no subcommand is specified)")]
+    #[clap(about = "Download an asset")]
     Download(DownloadArgs),
-    #[clap(about = "Mode to query information about assets or releases of a repository")]
+    #[clap(about = "Query information about assets or releases of a repository")]
     Query(QueryArgs),
 }
 
@@ -107,7 +60,9 @@ pub struct QueryArgs {
 
 #[derive(Subcommand)]
 pub enum QueryType {
+    #[clap(about = "Query releases")]
     Releases(ReleasesQueryArgs),
+    #[clap(about = "Query assets")]
     Assets(AssetsQueryArgs),
 }
 
