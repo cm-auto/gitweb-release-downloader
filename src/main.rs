@@ -71,27 +71,21 @@ fn get_releases_api_url(repository: &arguments::Repository) -> String {
     }
 }
 
-fn get_releases(agent: &Agent, repository: &arguments::Repository, quiet: bool) -> Vec<Release> {
+fn get_releases(agent: &Agent, repository: &arguments::Repository) -> Vec<Release> {
     let releases_address = get_releases_api_url(repository);
 
     let response = make_get_request(agent, &releases_address).unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("HTTP request failed:\n{e}");
-        }
+        eprintln!("HTTP request failed:\n{e}");
         process::exit(1);
     });
 
     let releases_json_string = response.into_string().unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("Could not get json from response:\n{e}");
-        }
+        eprintln!("Could not get json from response:\n{e}");
         process::exit(1);
     });
 
     serde_json::from_str::<Vec<Release>>(&releases_json_string).unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("Could not deserialize json:\n{e}");
-        }
+        eprintln!("Could not deserialize json:\n{e}");
         process::exit(1);
     })
 }
@@ -101,19 +95,15 @@ fn get_releases(agent: &Agent, repository: &arguments::Repository, quiet: bool) 
 
 // TODO use more functions instead of putting everything into main
 
-fn get_compiled_asset_pattern_or_exit(quiet: bool, pattern: &str) -> Regex {
+fn get_compiled_asset_pattern_or_exit(pattern: &str) -> Regex {
     Regex::new(pattern).unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("Could not compile RegEx:\n{e}");
-        }
-
+        eprintln!("Could not compile RegEx:\n{e}");
         process::exit(1);
     })
 }
 
 fn get_asset_or_exit<'a>(
     releases: &'a [Release],
-    quiet: bool,
     parsed_args: &arguments::DownloadArgs,
     compiled_asset_pattern: &Regex,
 ) -> &'a Asset {
@@ -125,18 +115,16 @@ fn get_asset_or_exit<'a>(
     );
 
     let Some(asset) = asset_option else {
-        if !quiet {
-            let tag_string = match &parsed_args.tag {
-                Some(tag) => format!("tag \"{tag}\""),
-                None => "latest tag".to_string(),
-            };
-            eprintln!(
-                // TODO this error is also shown if the repository does not exist, which can be misleading
-                r#"Could not find Pattern "{asset_pattern}" in {tag_string} in releases of repository "{repository}""#,
-                asset_pattern = parsed_args.asset_pattern,
-                repository = parsed_args.repository.passed_string,
-            );
-        }
+        let tag_string = match &parsed_args.tag {
+            Some(tag) => format!("tag \"{tag}\""),
+            None => "latest tag".to_string(),
+        };
+        eprintln!(
+            // TODO this error is also shown if the repository does not exist, which can be misleading
+            r#"Could not find Pattern "{asset_pattern}" in {tag_string} in releases of repository "{repository}""#,
+            asset_pattern = parsed_args.asset_pattern,
+            repository = parsed_args.repository.passed_string,
+        );
         process::exit(1);
     };
 
@@ -223,14 +211,11 @@ fn stream_response_into_file(
     }
 }
 
-fn print_releases(quiet: bool, releases_query_args: arguments::ReleasesQueryArgs) {
+fn print_releases(releases_query_args: arguments::ReleasesQueryArgs) {
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    if quiet {
-        return;
-    }
     let repository: arguments::Repository = releases_query_args.repository;
-    let releases = get_releases(&agent, &repository, quiet);
+    let releases = get_releases(&agent, &repository);
     let releases_iter = releases
         .iter()
         .filter(|release| !release.prerelease || releases_query_args.allow_prerelease)
@@ -240,13 +225,10 @@ fn print_releases(quiet: bool, releases_query_args: arguments::ReleasesQueryArgs
     }
 }
 
-fn print_assets(quiet: bool, assets_query_args: arguments::AssetsQueryArgs) {
+fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    if quiet {
-        return;
-    }
-    let releases = get_releases(&agent, &assets_query_args.repository, quiet);
+    let releases = get_releases(&agent, &assets_query_args.repository);
     let Some(release) = find_release(&releases, assets_query_args.tag.as_deref(), true) else {
         match &assets_query_args.tag {
             Some(tag) => eprintln!("Could not find release with tag \"{tag}\""),
@@ -254,7 +236,7 @@ fn print_assets(quiet: bool, assets_query_args: arguments::AssetsQueryArgs) {
         }
         process::exit(1);
     };
-    let regex = get_compiled_asset_pattern_or_exit(quiet, &assets_query_args.pattern);
+    let regex = get_compiled_asset_pattern_or_exit(&assets_query_args.pattern);
     let assets = find_assets_in_release(release, &regex);
     for asset in assets {
         println!("{}", asset.name);
@@ -263,16 +245,15 @@ fn print_assets(quiet: bool, assets_query_args: arguments::AssetsQueryArgs) {
 
 fn main() {
     let args = arguments::parse_arguments();
-    let quiet = args.quiet;
 
     let parsed_args = match args.command_mode {
         arguments::CommandMode::Query(query_args) => match query_args.query_type {
             arguments::QueryType::Releases(releases_query_args) => {
-                print_releases(quiet, releases_query_args);
+                print_releases(releases_query_args);
                 exit(0);
             }
             arguments::QueryType::Assets(assets_query_args) => {
-                print_assets(quiet, assets_query_args);
+                print_assets(assets_query_args);
                 exit(0);
             }
         },
@@ -284,50 +265,37 @@ fn main() {
     // but just to be sure:
     // TODO check if indicatif enables ansi on windows terminals
 
-    let compiled_asset_pattern =
-        get_compiled_asset_pattern_or_exit(quiet, &parsed_args.asset_pattern);
+    let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&parsed_args.asset_pattern);
 
     let agent: Agent = ureq::AgentBuilder::new().build();
 
-    let releases = get_releases(&agent, &parsed_args.repository, quiet);
+    let releases = get_releases(&agent, &parsed_args.repository);
 
-    let asset = get_asset_or_exit(&releases, quiet, &parsed_args, &compiled_asset_pattern);
+    let asset = get_asset_or_exit(&releases, &parsed_args, &compiled_asset_pattern);
 
-    if !quiet {
-        // printing to stderr, since posix (or unix?)
-        // says progress is written to stderr
-        // this makes sense especially if we pipe the name
-        // into a script: the script gets the downloaded
-        // file name and the user can still see the progress
-        eprintln!(r#"Downloading "{}""#, &asset.name);
-    }
+    // printing to stderr, since posix (or unix?)
+    // says progress is written to stderr
+    // this makes sense especially if we pipe the name
+    // into a script: the script gets the downloaded
+    // file name and the user can still see the progress
+    eprintln!(r#"Downloading "{}""#, &asset.name);
 
     let response = make_get_request(&agent, &asset.browser_download_url).unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("Error downloading file:\n{e}");
-        }
+        eprintln!("Error downloading file:\n{e}");
         process::exit(1);
     });
 
     let out_filename = &asset.name;
 
     let out_file = File::create(out_filename).unwrap_or_else(|e| {
-        if !quiet {
-            eprintln!("Error creating file:\n{e}");
-        }
+        eprintln!("Error creating file:\n{e}");
         process::exit(1);
     });
 
-    if !quiet {
-        eprintln!("Writing to file \"{}\"", &out_filename);
-    }
+    eprintln!("Writing to file \"{}\"", &out_filename);
 
     let content_length_option = get_content_length(&response);
-    let pb_option = if quiet {
-        None
-    } else {
-        create_and_init_progress_bar(content_length_option)
-    };
+    let pb_option = create_and_init_progress_bar(content_length_option);
 
     stream_response_into_file(response, out_file, &pb_option);
 
@@ -336,10 +304,8 @@ fn main() {
         eprintln!();
     }
 
-    if !quiet {
-        eprintln!(r#"Successfully wrote to file "{}""#, &out_filename);
-        if parsed_args.print_filename {
-            print!(r#"{}"#, &out_filename)
-        }
+    eprintln!(r#"Successfully wrote to file "{}""#, &out_filename);
+    if parsed_args.print_filename {
+        print!(r#"{}"#, &out_filename)
     }
 }

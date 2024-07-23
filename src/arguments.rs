@@ -6,13 +6,6 @@ use regex::Regex;
 #[derive(Parser)]
 #[clap(args_conflicts_with_subcommands = true, version)]
 struct ArgumentsPrivate {
-    #[clap(
-        short = 'q',
-        long = "quiet",
-        default_value_t = false,
-        help = "Do not print anything"
-    )]
-    quiet: bool,
     #[clap(subcommand)]
     command_mode: Option<CommandMode>,
     // this is always None. It seems like flattening an Option struct,
@@ -33,14 +26,12 @@ impl ArgumentsPrivate {
 }
 
 pub struct Arguments {
-    pub quiet: bool,
     pub command_mode: CommandMode,
 }
 
 impl From<ArgumentsPrivate> for Arguments {
     fn from(val: ArgumentsPrivate) -> Self {
         Arguments {
-            quiet: val.quiet,
             command_mode: val.command_mode(),
         }
     }
@@ -103,7 +94,7 @@ pub struct DownloadArgs {
         short = 'f',
         long = "print-filename",
         default_value_t = false,
-        help = "Print downloaded filename to stdout\nThis will not print, if --quiet is specified"
+        help = "Print downloaded filename to stdout"
     )]
     pub print_filename: bool,
 }
