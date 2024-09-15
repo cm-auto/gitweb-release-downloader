@@ -1,7 +1,9 @@
 # gitweb-release-downloader
 
-Allows you to download release assets from (currently only) GitHub.\
-Additionally you can query a repository's releases and their respective assets.
+Allows you to download release assets from GitHub and Gitea (thus Forgejo is
+supported, too).\
+Additionally you can query a repository's releases and their respective assets.\
+Support for GitLab is planned.
 
 ## Usage
 
@@ -17,10 +19,16 @@ Alternatively
 grd download --website-type github "VSCodium/vscodium" "\\.deb$"
 ```
 
-First arguments is the repository\
+First argument is the repository\
 Second argument is a regex pattern for the asset to download\
 `--website-type` takes the type of git website (if this is omitted, the program
 tries to guess it from the passed repository)
+
+Downloading from the latest release of Forgejo on codeberg.org:
+
+```bash
+grd download --website-type gitea codeberg.org/forgejo/forgejo ".*"
+```
 
 It automatically takes the latest release, which is not a prerelease.\
 Alternatively it takes a tag to download with `--tag`.\

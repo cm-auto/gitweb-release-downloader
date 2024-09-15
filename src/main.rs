@@ -69,6 +69,15 @@ fn get_releases_api_url(repository: &arguments::Repository) -> String {
                 repository.owner, repository.name
             )
         }
+        // TODO: should support for plain http be added?
+        // might be useful in local networks
+        arguments::GitWebsite::Gitea => format!(
+            "https://{origin}{sub_path}api/v1/repos/{owner}/{name}/releases",
+            origin = repository.origin,
+            sub_path = repository.sub_path,
+            owner = repository.owner,
+            name = repository.name
+        ),
     }
 }
 

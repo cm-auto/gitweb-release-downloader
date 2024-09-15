@@ -75,7 +75,12 @@ fn get_github_optional_origin_and_repository_regex() -> Regex {
     // Regex::new(r"[^((https?://)?github.com/)?(?P<owner>[^/]+)/(?P<name>[^/]+)$").unwrap()
 
     // the origin is optional, since at this point the GitWebsite is known to be GitHub
-    Regex::new(r"^((https?://)?github.com/)?(?P<owner>[^/]+)/(?P<name>[^/]+)$").unwrap()
+    Regex::new(r"^((https?://)?github\.com/)?(?P<owner>[^/]+)/(?P<name>[^/]+)$").unwrap()
+}
+
+fn get_gitea_origin_sub_path_and_repository_regex() -> Regex {
+    // this includes the port
+    Regex::new(r"^(https?://)?(?P<origin>([^/]+\.)+[^/]+)(?P<sub_path>/(([^/]+)/)*)(?P<owner>[^/]+)/(?P<name>[^/]+)$").unwrap()
 }
 
 #[cfg_attr(test, derive(Debug))]
@@ -97,7 +102,6 @@ impl Display for ParseRepositoryError {
 fn parse_repository(
     repository_string: String,
     website_type: GitWebsite,
-    sub_path: Option<String>,
 ) -> Result<Repository, ParseRepositoryError> {
     match website_type {
         GitWebsite::GitHub => {
@@ -111,7 +115,22 @@ fn parse_repository(
                     website: website_type,
                     owner: captures["owner"].to_string(),
                     name: captures["name"].to_string(),
-                    sub_path,
+                    origin: "github.com".to_string(),
+                    sub_path: "/".to_string(),
+                    passed_string: repository_string,
+                });
+            }
+        }
+        GitWebsite::Gitea => {
+            let gitea_pattern = get_gitea_origin_sub_path_and_repository_regex();
+            let captures_option = gitea_pattern.captures(&repository_string);
+            if let Some(captures) = captures_option {
+                return Ok(Repository {
+                    website: website_type,
+                    owner: captures["owner"].to_string(),
+                    name: captures["name"].to_string(),
+                    origin: captures["origin"].to_string(),
+                    sub_path: captures["sub_path"].to_string(),
                     passed_string: repository_string,
                 });
             }
@@ -166,6 +185,7 @@ pub struct AssetsQueryArgs {
 #[clap(rename_all = "lower")]
 pub enum GitWebsite {
     GitHub,
+    Gitea,
 }
 
 // RepositoryArguments takes the actual raw arguments passed to the
@@ -184,6 +204,10 @@ struct RepositoryArguments {
         help = "If omitted, it will be guessed from repository url"
     )]
     pub website_type: Option<GitWebsite>,
+
+    // it seems like gitlab has the api as subpath, just like gitea
+    // this is not necessary for gitea, if gitlab doesn't need it, then...
+    // TODO: remove this
     #[clap(
         short = 's',
         long = "sub-path",
@@ -199,9 +223,9 @@ pub struct Repository {
     pub owner: String,
     pub name: String,
     // for self hosted websites like Gitea
+    pub origin: String,
     // TODO: remove allow dead_code when sub_path is actually used
-    #[allow(dead_code)]
-    pub sub_path: Option<String>,
+    pub sub_path: String,
     pub passed_string: String,
 }
 
@@ -280,7 +304,7 @@ impl TryFrom<RepositoryArguments> for Repository {
         let RepositoryArguments {
             repository,
             website_type,
-            sub_path,
+            sub_path: _,
         } = val;
 
         // first we check if the website type has been provided as an argument
@@ -294,7 +318,7 @@ impl TryFrom<RepositoryArguments> for Repository {
         let website_type =
             website_type.ok_or(RepositoryArgumentsToRepositoryError::GuessWebsiteFail)?;
 
-        let repository = parse_repository(repository, website_type, sub_path)?;
+        let repository = parse_repository(repository, website_type)?;
         Ok(repository)
     }
 }
@@ -317,14 +341,14 @@ mod tests {
         let repository = parse_repository(
             "https://github.com/cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
-            None,
         )
         .unwrap();
         let expected = Repository {
             website: GitWebsite::GitHub,
             owner: "cm-auto".to_string(),
             name: "gitweb-release-downloader".to_string(),
-            sub_path: None,
+            origin: "github.com".to_string(),
+            sub_path: "/".to_string(),
             passed_string: "https://github.com/cm-auto/gitweb-release-downloader".to_string(),
         };
         assert_eq!(repository, expected);
@@ -335,14 +359,14 @@ mod tests {
         let repository = parse_repository(
             "github.com/cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
-            None,
         )
         .unwrap();
         let expected = Repository {
             website: GitWebsite::GitHub,
             owner: "cm-auto".to_string(),
             name: "gitweb-release-downloader".to_string(),
-            sub_path: None,
+            origin: "github.com".to_string(),
+            sub_path: "/".to_string(),
             passed_string: "github.com/cm-auto/gitweb-release-downloader".to_string(),
         };
         assert_eq!(repository, expected);
@@ -353,15 +377,147 @@ mod tests {
         let repository = parse_repository(
             "cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
-            None,
         )
         .unwrap();
         let expected = Repository {
             website: GitWebsite::GitHub,
             owner: "cm-auto".to_string(),
             name: "gitweb-release-downloader".to_string(),
-            sub_path: None,
+            origin: "github.com".to_string(),
+            sub_path: "/".to_string(),
             passed_string: "cm-auto/gitweb-release-downloader".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_codeberg_forgejo() {
+        let repository = parse_repository(
+            "https://codeberg.org/forgejo/forgejo".into(),
+            GitWebsite::Gitea,
+        )
+        .unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "forgejo".to_string(),
+            name: "forgejo".to_string(),
+            origin: "codeberg.org".to_string(),
+            sub_path: "/".to_string(),
+            passed_string: "https://codeberg.org/forgejo/forgejo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_codeberg_forgejo_without_protocol() {
+        let repository =
+            parse_repository("codeberg.org/forgejo/forgejo".into(), GitWebsite::Gitea).unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "forgejo".to_string(),
+            name: "forgejo".to_string(),
+            origin: "codeberg.org".to_string(),
+            sub_path: "/".to_string(),
+            passed_string: "codeberg.org/forgejo/forgejo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_sub_domain() {
+        let repository = parse_repository(
+            "https://gitea.example.com/owner/repo".into(),
+            GitWebsite::Gitea,
+        )
+        .unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            origin: "gitea.example.com".to_string(),
+            sub_path: "/".to_string(),
+            passed_string: "https://gitea.example.com/owner/repo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_sub_domain_without_protocol() {
+        let repository =
+            parse_repository("gitea.example.com/owner/repo".into(), GitWebsite::Gitea).unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            origin: "gitea.example.com".to_string(),
+            sub_path: "/".to_string(),
+            passed_string: "gitea.example.com/owner/repo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_sub_path() {
+        let repository = parse_repository(
+            "https://example.com/gitea/owner/repo".into(),
+            GitWebsite::Gitea,
+        )
+        .unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            origin: "example.com".to_string(),
+            sub_path: "/gitea/".to_string(),
+            passed_string: "https://example.com/gitea/owner/repo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_sub_path_without_protocol() {
+        let repository =
+            parse_repository("example.com/gitea/owner/repo".into(), GitWebsite::Gitea).unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            origin: "example.com".to_string(),
+            sub_path: "/gitea/".to_string(),
+            passed_string: "example.com/gitea/owner/repo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_with_port() {
+        let repository = parse_repository(
+            "https://example.com:1337/owner/repo".into(),
+            GitWebsite::Gitea,
+        )
+        .unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            origin: "example.com:1337".to_string(),
+            sub_path: "/".to_string(),
+            passed_string: "https://example.com:1337/owner/repo".to_string(),
+        };
+        assert_eq!(repository, expected);
+    }
+
+    #[test]
+    fn test_parse_gitea_with_port_without_protocol() {
+        let repository =
+            parse_repository("example.com:1337/owner/repo".into(), GitWebsite::Gitea).unwrap();
+        let expected = Repository {
+            website: GitWebsite::Gitea,
+            owner: "owner".to_string(),
+            name: "repo".to_string(),
+            origin: "example.com:1337".to_string(),
+            sub_path: "/".to_string(),
+            passed_string: "example.com:1337/owner/repo".to_string(),
         };
         assert_eq!(repository, expected);
     }
@@ -373,5 +529,6 @@ mod tests {
     fn test_regex_compilations() {
         get_github_optional_origin_and_repository_regex();
         get_guess_website_type_github_regex();
+        get_gitea_origin_sub_path_and_repository_regex();
     }
 }
