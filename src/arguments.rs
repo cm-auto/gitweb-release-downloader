@@ -83,6 +83,11 @@ fn get_gitea_origin_sub_path_and_repository_regex() -> Regex {
     Regex::new(r"^(https?://)?(?P<origin>([^/]+\.)+[^/]+)(?P<sub_path>/(([^/]+)/)*)(?P<owner>[^/]+)/(?P<name>[^/]+)$").unwrap()
 }
 
+fn get_gitlab_origin_sub_path_and_repository_regex() -> Regex {
+    // currently exactly the same
+    get_gitea_origin_sub_path_and_repository_regex()
+}
+
 #[cfg_attr(test, derive(Debug))]
 enum ParseRepositoryError {
     InvalidRepository(String),
@@ -124,6 +129,20 @@ fn parse_repository(
         GitWebsite::Gitea => {
             let gitea_pattern = get_gitea_origin_sub_path_and_repository_regex();
             let captures_option = gitea_pattern.captures(&repository_string);
+            if let Some(captures) = captures_option {
+                return Ok(Repository {
+                    website: website_type,
+                    owner: captures["owner"].to_string(),
+                    name: captures["name"].to_string(),
+                    origin: captures["origin"].to_string(),
+                    sub_path: captures["sub_path"].to_string(),
+                    passed_string: repository_string,
+                });
+            }
+        }
+        GitWebsite::GitLab => {
+            let gitlab_pattern = get_gitlab_origin_sub_path_and_repository_regex();
+            let captures_option = gitlab_pattern.captures(&repository_string);
             if let Some(captures) = captures_option {
                 return Ok(Repository {
                     website: website_type,
@@ -186,6 +205,7 @@ pub struct AssetsQueryArgs {
 pub enum GitWebsite {
     GitHub,
     Gitea,
+    GitLab,
 }
 
 // RepositoryArguments takes the actual raw arguments passed to the
@@ -204,17 +224,6 @@ struct RepositoryArguments {
         help = "If omitted, it will be guessed from repository url"
     )]
     pub website_type: Option<GitWebsite>,
-
-    // it seems like gitlab has the api as subpath, just like gitea
-    // this is not necessary for gitea, if gitlab doesn't need it, then...
-    // TODO: remove this
-    #[clap(
-        short = 's',
-        long = "sub-path",
-        // only subpath not whole url
-        help = "Sub path of the git website (https://example.com\x1b[1m/gitea\x1b[0m/user/repo -> /gitea)\nIgnored if website type is GitHub",
-    )]
-    pub sub_path: Option<String>,
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq))]
@@ -224,7 +233,6 @@ pub struct Repository {
     pub name: String,
     // for self hosted websites like Gitea
     pub origin: String,
-    // TODO: remove allow dead_code when sub_path is actually used
     pub sub_path: String,
     pub passed_string: String,
 }
@@ -260,11 +268,23 @@ fn get_guess_website_type_github_regex() -> Regex {
     Regex::new(r"^(https?://)?github.com/.*").unwrap()
 }
 
+fn get_guess_website_type_gitlab_com_regex() -> Regex {
+    Regex::new(r"^(https?://)?gitlab.com/.*").unwrap()
+}
+
 fn guess_website_type(repository_string: &str) -> Option<GitWebsite> {
-    let github_pattern = get_guess_website_type_github_regex();
-    let captures_option = github_pattern.captures(repository_string);
-    if captures_option.is_some() {
+    if get_guess_website_type_github_regex()
+        .captures(repository_string)
+        .is_some()
+    {
         return Some(GitWebsite::GitHub);
+    }
+
+    if get_guess_website_type_gitlab_com_regex()
+        .captures(repository_string)
+        .is_some()
+    {
+        return Some(GitWebsite::GitLab);
     }
     None
 }
@@ -304,7 +324,6 @@ impl TryFrom<RepositoryArguments> for Repository {
         let RepositoryArguments {
             repository,
             website_type,
-            sub_path: _,
         } = val;
 
         // first we check if the website type has been provided as an argument
@@ -333,7 +352,10 @@ mod tests {
             guess_website_type("https://github.com/"),
             Some(GitWebsite::GitHub)
         ));
-        assert!(guess_website_type("https://gitlab.com/").is_none());
+        assert!(matches!(
+            guess_website_type("https://gitlab.com/"),
+            Some(GitWebsite::GitLab)
+        ));
     }
 
     #[test]
@@ -530,5 +552,6 @@ mod tests {
         get_github_optional_origin_and_repository_regex();
         get_guess_website_type_github_regex();
         get_gitea_origin_sub_path_and_repository_regex();
+        get_guess_website_type_gitlab_com_regex();
     }
 }

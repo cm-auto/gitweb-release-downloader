@@ -12,6 +12,9 @@ use models::*;
 use regex::Regex;
 use ureq::{Agent, Response};
 
+// TODO: check if ureq allows enforcing ipv4/ipv6 only
+// might be possible by calling resolver() or middleware() on AgentBuilder
+
 // GitHub requires the usage of a user agent
 const USERAGENT: &str = "gitweb-release-downloader";
 
@@ -65,14 +68,22 @@ fn get_releases_api_url(repository: &arguments::Repository) -> String {
     match repository.website {
         arguments::GitWebsite::GitHub => {
             format!(
-                "https://api.github.com/repos/{}/{}/releases",
-                repository.owner, repository.name
+                "https://api.github.com/repos/{owner}/{name}/releases",
+                owner = repository.owner,
+                name = repository.name,
             )
         }
         // TODO: should support for plain http be added?
         // might be useful in local networks
         arguments::GitWebsite::Gitea => format!(
             "https://{origin}{sub_path}api/v1/repos/{owner}/{name}/releases",
+            origin = repository.origin,
+            sub_path = repository.sub_path,
+            owner = repository.owner,
+            name = repository.name
+        ),
+        arguments::GitWebsite::GitLab => format!(
+            "https://{origin}{sub_path}api/v4/projects/{owner}%2F{name}/releases",
             origin = repository.origin,
             sub_path = repository.sub_path,
             owner = repository.owner,
@@ -94,7 +105,16 @@ fn get_releases(agent: &Agent, repository: &arguments::Repository) -> Vec<Releas
         process::exit(1);
     });
 
-    serde_json::from_str::<Vec<Release>>(&releases_json_string).unwrap_or_else(|e| {
+    let releases = match repository.website {
+        arguments::GitWebsite::GitHub | arguments::GitWebsite::Gitea => {
+            serde_json::from_str::<Vec<Release>>(&releases_json_string)
+        }
+        arguments::GitWebsite::GitLab => {
+            serde_json::from_str::<Vec<GitLabRelease>>(&releases_json_string)
+                .map(|e| e.into_iter().map(Into::into).collect())
+        }
+    };
+    releases.unwrap_or_else(|e| {
         eprintln!("Could not deserialize json:\n{e}");
         process::exit(1);
     })
@@ -125,7 +145,6 @@ fn get_asset_or_exit<'a>(
             None => "latest tag".to_string(),
         };
         eprintln!(
-            // TODO this error is also shown if the repository does not exist, which can be misleading
             r#"Could not find Pattern "{asset_pattern}" in {tag_string} in releases of repository "{repository}""#,
             asset_pattern = parsed_args.asset_pattern,
             repository = parsed_args.repository.passed_string,
