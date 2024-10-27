@@ -3,17 +3,35 @@ mod models;
 use std::{
     fs::File,
     io::{stderr, Write},
+    net::ToSocketAddrs,
     process::{self, exit},
 };
 
+use arguments::IpType;
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
 use regex::Regex;
-use ureq::{Agent, Response};
+use ureq::{Agent, Resolver, Response};
 
-// TODO: check if ureq allows enforcing ipv4/ipv6 only
-// might be possible by calling resolver() or middleware() on AgentBuilder
+impl Resolver for IpType {
+    fn resolve(&self, netloc: &str) -> std::io::Result<Vec<std::net::SocketAddr>> {
+        ToSocketAddrs::to_socket_addrs(netloc).map(|iter| {
+            iter.filter(|address| match self {
+                Self::Any => true,
+                Self::IPV4 => address.is_ipv4(),
+                Self::IPV6 => address.is_ipv6(),
+            })
+            .collect()
+        })
+    }
+}
+
+fn get_default_agent(repository: &arguments::Repository) -> Agent {
+    ureq::AgentBuilder::new()
+        .resolver(repository.ip_type)
+        .build()
+}
 
 // GitHub requires the usage of a user agent
 const USERAGENT: &str = "gitweb-release-downloader";
@@ -64,26 +82,34 @@ fn find_assets_in_release<'a>(release: &'a Release, asset_name_pattern: &Regex) 
     matching_assets
 }
 
+#[inline(always)]
+fn get_scheme_from_repository_string(url: &str) -> &str {
+    if url.starts_with("http://") {
+        "http"
+    } else {
+        "https"
+    }
+}
+
 fn get_releases_api_url(repository: &arguments::Repository) -> String {
+    let scheme = get_scheme_from_repository_string(&repository.passed_string);
     match repository.website {
         arguments::GitWebsite::GitHub => {
             format!(
-                "https://api.github.com/repos/{owner}/{name}/releases",
+                "{scheme}://api.github.com/repos/{owner}/{name}/releases",
                 owner = repository.owner,
                 name = repository.name,
             )
         }
-        // TODO: should support for plain http be added?
-        // might be useful in local networks
         arguments::GitWebsite::Gitea => format!(
-            "https://{origin}{sub_path}api/v1/repos/{owner}/{name}/releases",
+            "{scheme}://{origin}{sub_path}api/v1/repos/{owner}/{name}/releases",
             origin = repository.origin,
             sub_path = repository.sub_path,
             owner = repository.owner,
             name = repository.name
         ),
         arguments::GitWebsite::GitLab => format!(
-            "https://{origin}{sub_path}api/v4/projects/{owner}%2F{name}/releases",
+            "{scheme}://{origin}{sub_path}api/v4/projects/{owner}%2F{name}/releases",
             origin = repository.origin,
             sub_path = repository.sub_path,
             owner = repository.owner,
@@ -231,7 +257,7 @@ fn stream_response_into_file(
 }
 
 fn print_releases(releases_query_args: arguments::ReleasesQueryArgs) {
-    let agent: Agent = ureq::AgentBuilder::new().build();
+    let agent: Agent = get_default_agent(&releases_query_args.repository);
 
     let repository: arguments::Repository = releases_query_args.repository;
     let releases = get_releases(&agent, &repository);
@@ -245,7 +271,7 @@ fn print_releases(releases_query_args: arguments::ReleasesQueryArgs) {
 }
 
 fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
-    let agent: Agent = ureq::AgentBuilder::new().build();
+    let agent: Agent = get_default_agent(&assets_query_args.repository);
 
     let releases = get_releases(&agent, &assets_query_args.repository);
     // if no tag is specified, prereleases are not allowed
@@ -274,7 +300,7 @@ fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
 fn download_assets(download_args: arguments::DownloadArgs) {
     let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&download_args.asset_pattern);
 
-    let agent: Agent = ureq::AgentBuilder::new().build();
+    let agent: Agent = get_default_agent(&download_args.repository);
 
     let releases = get_releases(&agent, &download_args.repository);
 
