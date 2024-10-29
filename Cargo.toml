@@ -3,6 +3,11 @@ name = "gitweb-release-downloader"
 version = "1.0.0"
 edition = "2021"
 license = "GPL-3.0-only"
+description = "Allows you to download release assets from GitHub and Gitea (thus Forgejo is supported, too) and GitLab."
+repository = "https://github.com/cm-auto/gitweb-release-downloader"
+readme = "README.md"
+categories = ["command-line-utilities"]
+keywords = ["git", "github", "forgejo", "download", "releases"]
 
 [[bin]]
 name = "grd"
