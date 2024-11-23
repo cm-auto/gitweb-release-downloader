@@ -105,6 +105,7 @@ fn parse_repository(
     repository_string: String,
     website_type: GitWebsite,
     ip_type: IpType,
+    headers: Vec<String>,
 ) -> Result<Repository, ParseRepositoryError> {
     match website_type {
         GitWebsite::GitHub => {
@@ -122,6 +123,7 @@ fn parse_repository(
                     sub_path: "/".to_string(),
                     passed_string: repository_string,
                     ip_type,
+                    headers,
                 });
             }
         }
@@ -137,6 +139,7 @@ fn parse_repository(
                     sub_path: captures["sub_path"].to_string(),
                     passed_string: repository_string,
                     ip_type,
+                    headers,
                 });
             }
         }
@@ -152,6 +155,7 @@ fn parse_repository(
                     sub_path: captures["sub_path"].to_string(),
                     passed_string: repository_string,
                     ip_type,
+                    headers,
                 });
             }
         }
@@ -255,6 +259,11 @@ struct RepositoryArguments {
         default_value = IpType::Any,
     )]
     pub ip_type: IpType,
+    #[clap(
+        long = "header",
+        help = "Http header to use, can be specified multiple times"
+    )]
+    pub headers: Vec<String>,
 }
 
 #[cfg_attr(test, derive(Debug, PartialEq))]
@@ -267,6 +276,7 @@ pub struct Repository {
     pub sub_path: String,
     pub passed_string: String,
     pub ip_type: IpType,
+    pub headers: Vec<String>,
 }
 
 impl FromArgMatches for Repository {
@@ -357,6 +367,7 @@ impl TryFrom<RepositoryArguments> for Repository {
             repository,
             website_type,
             ip_type,
+            headers,
         } = val;
 
         // first we check if the website type has been provided as an argument
@@ -370,7 +381,7 @@ impl TryFrom<RepositoryArguments> for Repository {
         let website_type =
             website_type.ok_or(RepositoryArgumentsToRepositoryError::GuessWebsiteFail)?;
 
-        let repository = parse_repository(repository, website_type, ip_type)?;
+        let repository = parse_repository(repository, website_type, ip_type, headers)?;
         Ok(repository)
     }
 }
@@ -397,6 +408,7 @@ mod tests {
             "https://github.com/cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -407,6 +419,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "https://github.com/cm-auto/gitweb-release-downloader".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -417,6 +430,7 @@ mod tests {
             "github.com/cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -427,6 +441,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "github.com/cm-auto/gitweb-release-downloader".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -437,6 +452,7 @@ mod tests {
             "cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -447,6 +463,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "cm-auto/gitweb-release-downloader".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -457,6 +474,7 @@ mod tests {
             "https://codeberg.org/forgejo/forgejo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -467,6 +485,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "https://codeberg.org/forgejo/forgejo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -477,6 +496,7 @@ mod tests {
             "codeberg.org/forgejo/forgejo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -487,6 +507,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "codeberg.org/forgejo/forgejo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -497,6 +518,7 @@ mod tests {
             "https://gitea.example.com/owner/repo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -507,6 +529,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "https://gitea.example.com/owner/repo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -517,6 +540,7 @@ mod tests {
             "gitea.example.com/owner/repo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -527,6 +551,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "gitea.example.com/owner/repo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -537,6 +562,7 @@ mod tests {
             "https://example.com/gitea/owner/repo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -547,6 +573,7 @@ mod tests {
             sub_path: "/gitea/".to_string(),
             passed_string: "https://example.com/gitea/owner/repo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -557,6 +584,7 @@ mod tests {
             "example.com/gitea/owner/repo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -567,6 +595,7 @@ mod tests {
             sub_path: "/gitea/".to_string(),
             passed_string: "example.com/gitea/owner/repo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -577,6 +606,7 @@ mod tests {
             "https://example.com:1337/owner/repo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -587,6 +617,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "https://example.com:1337/owner/repo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -597,6 +628,7 @@ mod tests {
             "example.com:1337/owner/repo".into(),
             GitWebsite::Gitea,
             IpType::Any,
+            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -607,6 +639,7 @@ mod tests {
             sub_path: "/".to_string(),
             passed_string: "example.com:1337/owner/repo".to_string(),
             ip_type: IpType::Any,
+            headers: vec![],
         };
         assert_eq!(repository, expected);
     }

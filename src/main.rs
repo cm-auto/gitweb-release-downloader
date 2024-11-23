@@ -121,10 +121,11 @@ fn get_releases_api_url(repository: &arguments::Repository) -> String {
 fn get_releases(agent: &Agent, repository: &arguments::Repository) -> Vec<Release> {
     let releases_address = get_releases_api_url(repository);
 
-    let response = make_get_request(agent, &releases_address).unwrap_or_else(|e| {
-        eprintln!("HTTP request failed:\n{e}");
-        process::exit(1);
-    });
+    let response =
+        make_get_request(agent, &releases_address, &repository.headers).unwrap_or_else(|e| {
+            eprintln!("HTTP request failed:\n{e}");
+            process::exit(1);
+        });
 
     let releases_json_string = response.into_string().unwrap_or_else(|e| {
         eprintln!("Could not get json from response:\n{e}");
@@ -181,8 +182,22 @@ fn get_asset_or_exit<'a>(
     asset
 }
 
-fn make_get_request(agent: &Agent, url: &str) -> Result<Response, Box<ureq::Error>> {
-    let request = agent.get(url).set("user-agent", USERAGENT);
+fn make_get_request(
+    agent: &Agent,
+    url: &str,
+    headers: &[String],
+) -> Result<Response, Box<ureq::Error>> {
+    let mut request = agent.get(url).set("user-agent", USERAGENT);
+    for header in headers {
+        // according to the first paragraph of the following mdn site, whitespace before the value
+        // is ignored, so we don't need to remove anything
+        // https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers
+        let (header_name, value) = header.split_once(":").unwrap_or_else(|| {
+            eprintln!("Http header \"{header}\" has invalid format, must be: \"header-name: header-value\"");
+            process::exit(1);
+        });
+        request = request.set(header_name, value);
+    }
 
     request.call().map_err(Box::new)
 }
@@ -313,7 +328,12 @@ fn download_assets(download_args: arguments::DownloadArgs) {
     // file name and the user can still see the progress
     eprintln!(r#"Downloading "{}""#, &asset.name);
 
-    let response = make_get_request(&agent, &asset.browser_download_url).unwrap_or_else(|e| {
+    let response = make_get_request(
+        &agent,
+        &asset.browser_download_url,
+        &download_args.repository.headers,
+    )
+    .unwrap_or_else(|e| {
         eprintln!("Error downloading file:\n{e}");
         process::exit(1);
     });
