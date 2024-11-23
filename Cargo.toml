@@ -8,6 +8,7 @@ repository = "https://github.com/cm-auto/gitweb-release-downloader"
 readme = "README.md"
 categories = ["command-line-utilities"]
 keywords = ["git", "github", "forgejo", "download", "releases"]
+exclude = ["scripts/*"]
 
 [[bin]]
 name = "grd"
