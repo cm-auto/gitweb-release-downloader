@@ -7,7 +7,7 @@ use std::{
     process::{self, exit},
 };
 
-use arguments::IpType;
+use arguments::{GitWebsite, IpType};
 use clap::Parser;
 use indicatif::{ProgressBar, ProgressStyle};
 use models::*;
@@ -312,14 +312,20 @@ fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
     }
 }
 
-fn download_assets(download_args: arguments::DownloadArgs) {
+fn get_github_asset_api_url(owner: &str, repository: &str, asset_id: i64) -> String {
+    format!("https://api.github.com/repos/{owner}/{repository}/releases/assets/{asset_id}")
+}
+
+fn download_assets(mut download_args: arguments::DownloadArgs) {
     let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&download_args.asset_pattern);
 
-    let agent: Agent = get_default_agent(&download_args.repository);
-
-    let releases = get_releases(&agent, &download_args.repository);
-
+    let repository = &download_args.repository;
+    let agent: Agent = get_default_agent(repository);
+    let releases = get_releases(&agent, repository);
     let asset = get_asset_or_exit(&releases, &download_args, &compiled_asset_pattern);
+
+    // drop immutable reference and get a mutable reference
+    let repository = &mut download_args.repository;
 
     // printing to stderr, since posix (or unix?)
     // says progress is written to stderr
@@ -328,12 +334,18 @@ fn download_assets(download_args: arguments::DownloadArgs) {
     // file name and the user can still see the progress
     eprintln!(r#"Downloading "{}""#, &asset.name);
 
-    let response = make_get_request(
-        &agent,
-        &asset.browser_download_url,
-        &download_args.repository.headers,
-    )
-    .unwrap_or_else(|e| {
+    let url_buffer: String;
+    let url = if matches!(repository.website, GitWebsite::GitHub) {
+        repository
+            .headers
+            .push("Accept: application/octet-stream".to_string());
+        url_buffer = get_github_asset_api_url(&repository.owner, &repository.name, asset.id);
+        url_buffer.as_str()
+    } else {
+        &asset.browser_download_url
+    };
+
+    let response = make_get_request(&agent, url, &repository.headers).unwrap_or_else(|e| {
         eprintln!("Error downloading file:\n{e}");
         process::exit(1);
     });

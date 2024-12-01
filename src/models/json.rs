@@ -11,6 +11,7 @@ pub struct Release {
 pub struct Asset {
     pub browser_download_url: String,
     pub name: String,
+    pub id: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,6 +40,7 @@ pub struct GitLabAssets {
 pub struct GitLabAsset {
     pub name: String,
     pub direct_asset_url: String,
+    pub id: i64,
 }
 
 impl From<GitLabAsset> for Asset {
@@ -46,6 +48,7 @@ impl From<GitLabAsset> for Asset {
         Self {
             browser_download_url: value.direct_asset_url,
             name: value.name,
+            id: value.id,
         }
     }
 }
