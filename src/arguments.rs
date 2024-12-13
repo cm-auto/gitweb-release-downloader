@@ -22,6 +22,8 @@ pub enum CommandMode {
 pub struct DownloadArgs {
     #[clap(flatten)]
     pub repository: Repository,
+    #[clap(flatten)]
+    pub connection_settings: ConnectionSettings,
     #[clap(
         help = "Regex pattern of the asset to download\nIf pattern matches multiple assets, the first matching will be downloaded"
     )]
@@ -104,8 +106,6 @@ impl Display for ParseRepositoryError {
 fn parse_repository(
     repository_string: String,
     website_type: GitWebsite,
-    ip_type: IpType,
-    headers: Vec<String>,
 ) -> Result<Repository, ParseRepositoryError> {
     match website_type {
         GitWebsite::GitHub => {
@@ -122,8 +122,6 @@ fn parse_repository(
                     origin: "github.com".to_string(),
                     sub_path: "/".to_string(),
                     passed_string: repository_string,
-                    ip_type,
-                    headers,
                 });
             }
         }
@@ -138,8 +136,6 @@ fn parse_repository(
                     origin: captures["origin"].to_string(),
                     sub_path: captures["sub_path"].to_string(),
                     passed_string: repository_string,
-                    ip_type,
-                    headers,
                 });
             }
         }
@@ -154,8 +150,6 @@ fn parse_repository(
                     origin: captures["origin"].to_string(),
                     sub_path: captures["sub_path"].to_string(),
                     passed_string: repository_string,
-                    ip_type,
-                    headers,
                 });
             }
         }
@@ -167,6 +161,8 @@ fn parse_repository(
 pub struct ReleasesQueryArgs {
     #[clap(flatten)]
     pub repository: Repository,
+    #[clap(flatten)]
+    pub connection_settings: ConnectionSettings,
     #[clap(
         short = 'p',
         long = "prerelease",
@@ -188,6 +184,8 @@ pub struct ReleasesQueryArgs {
 pub struct AssetsQueryArgs {
     #[clap(flatten)]
     pub repository: Repository,
+    #[clap(flatten)]
+    pub connection_settings: ConnectionSettings,
     #[clap(
         short = 't',
         long = "tag",
@@ -251,6 +249,10 @@ struct RepositoryArguments {
         help = "If omitted, it will be guessed from repository url"
     )]
     pub website_type: Option<GitWebsite>,
+}
+
+#[derive(Parser)]
+pub struct ConnectionSettings {
     #[clap(
         short = 'i',
         long = "ip-type",
@@ -275,8 +277,6 @@ pub struct Repository {
     pub origin: String,
     pub sub_path: String,
     pub passed_string: String,
-    pub ip_type: IpType,
-    pub headers: Vec<String>,
 }
 
 impl FromArgMatches for Repository {
@@ -366,8 +366,6 @@ impl TryFrom<RepositoryArguments> for Repository {
         let RepositoryArguments {
             repository,
             website_type,
-            ip_type,
-            headers,
         } = val;
 
         // first we check if the website type has been provided as an argument
@@ -381,7 +379,7 @@ impl TryFrom<RepositoryArguments> for Repository {
         let website_type =
             website_type.ok_or(RepositoryArgumentsToRepositoryError::GuessWebsiteFail)?;
 
-        let repository = parse_repository(repository, website_type, ip_type, headers)?;
+        let repository = parse_repository(repository, website_type)?;
         Ok(repository)
     }
 }
@@ -407,8 +405,6 @@ mod tests {
         let repository = parse_repository(
             "https://github.com/cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -418,8 +414,6 @@ mod tests {
             origin: "github.com".to_string(),
             sub_path: "/".to_string(),
             passed_string: "https://github.com/cm-auto/gitweb-release-downloader".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -429,8 +423,6 @@ mod tests {
         let repository = parse_repository(
             "github.com/cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -440,8 +432,6 @@ mod tests {
             origin: "github.com".to_string(),
             sub_path: "/".to_string(),
             passed_string: "github.com/cm-auto/gitweb-release-downloader".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -451,8 +441,6 @@ mod tests {
         let repository = parse_repository(
             "cm-auto/gitweb-release-downloader".into(),
             GitWebsite::GitHub,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -462,8 +450,6 @@ mod tests {
             origin: "github.com".to_string(),
             sub_path: "/".to_string(),
             passed_string: "cm-auto/gitweb-release-downloader".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -473,8 +459,6 @@ mod tests {
         let repository = parse_repository(
             "https://codeberg.org/forgejo/forgejo".into(),
             GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -484,21 +468,14 @@ mod tests {
             origin: "codeberg.org".to_string(),
             sub_path: "/".to_string(),
             passed_string: "https://codeberg.org/forgejo/forgejo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
 
     #[test]
     fn test_parse_gitea_codeberg_forgejo_without_protocol() {
-        let repository = parse_repository(
-            "codeberg.org/forgejo/forgejo".into(),
-            GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
-        )
-        .unwrap();
+        let repository =
+            parse_repository("codeberg.org/forgejo/forgejo".into(), GitWebsite::Gitea).unwrap();
         let expected = Repository {
             website: GitWebsite::Gitea,
             owner: "forgejo".to_string(),
@@ -506,8 +483,6 @@ mod tests {
             origin: "codeberg.org".to_string(),
             sub_path: "/".to_string(),
             passed_string: "codeberg.org/forgejo/forgejo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -517,8 +492,6 @@ mod tests {
         let repository = parse_repository(
             "https://gitea.example.com/owner/repo".into(),
             GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -528,21 +501,14 @@ mod tests {
             origin: "gitea.example.com".to_string(),
             sub_path: "/".to_string(),
             passed_string: "https://gitea.example.com/owner/repo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
 
     #[test]
     fn test_parse_gitea_sub_domain_without_protocol() {
-        let repository = parse_repository(
-            "gitea.example.com/owner/repo".into(),
-            GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
-        )
-        .unwrap();
+        let repository =
+            parse_repository("gitea.example.com/owner/repo".into(), GitWebsite::Gitea).unwrap();
         let expected = Repository {
             website: GitWebsite::Gitea,
             owner: "owner".to_string(),
@@ -550,8 +516,6 @@ mod tests {
             origin: "gitea.example.com".to_string(),
             sub_path: "/".to_string(),
             passed_string: "gitea.example.com/owner/repo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -561,8 +525,6 @@ mod tests {
         let repository = parse_repository(
             "https://example.com/gitea/owner/repo".into(),
             GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -572,21 +534,14 @@ mod tests {
             origin: "example.com".to_string(),
             sub_path: "/gitea/".to_string(),
             passed_string: "https://example.com/gitea/owner/repo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
 
     #[test]
     fn test_parse_gitea_sub_path_without_protocol() {
-        let repository = parse_repository(
-            "example.com/gitea/owner/repo".into(),
-            GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
-        )
-        .unwrap();
+        let repository =
+            parse_repository("example.com/gitea/owner/repo".into(), GitWebsite::Gitea).unwrap();
         let expected = Repository {
             website: GitWebsite::Gitea,
             owner: "owner".to_string(),
@@ -594,8 +549,6 @@ mod tests {
             origin: "example.com".to_string(),
             sub_path: "/gitea/".to_string(),
             passed_string: "example.com/gitea/owner/repo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
@@ -605,8 +558,6 @@ mod tests {
         let repository = parse_repository(
             "https://example.com:1337/owner/repo".into(),
             GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
         )
         .unwrap();
         let expected = Repository {
@@ -616,21 +567,14 @@ mod tests {
             origin: "example.com:1337".to_string(),
             sub_path: "/".to_string(),
             passed_string: "https://example.com:1337/owner/repo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }
 
     #[test]
     fn test_parse_gitea_with_port_without_protocol() {
-        let repository = parse_repository(
-            "example.com:1337/owner/repo".into(),
-            GitWebsite::Gitea,
-            IpType::Any,
-            vec![],
-        )
-        .unwrap();
+        let repository =
+            parse_repository("example.com:1337/owner/repo".into(), GitWebsite::Gitea).unwrap();
         let expected = Repository {
             website: GitWebsite::Gitea,
             owner: "owner".to_string(),
@@ -638,8 +582,6 @@ mod tests {
             origin: "example.com:1337".to_string(),
             sub_path: "/".to_string(),
             passed_string: "example.com:1337/owner/repo".to_string(),
-            ip_type: IpType::Any,
-            headers: vec![],
         };
         assert_eq!(repository, expected);
     }

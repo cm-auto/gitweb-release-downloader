@@ -27,10 +27,8 @@ impl Resolver for IpType {
     }
 }
 
-fn get_default_agent(repository: &arguments::Repository) -> Agent {
-    ureq::AgentBuilder::new()
-        .resolver(repository.ip_type)
-        .build()
+fn get_default_agent(ip_type: IpType) -> Agent {
+    ureq::AgentBuilder::new().resolver(ip_type).build()
 }
 
 // GitHub requires the usage of a user agent
@@ -118,14 +116,17 @@ fn get_releases_api_url(repository: &arguments::Repository) -> String {
     }
 }
 
-fn get_releases(agent: &Agent, repository: &arguments::Repository) -> Vec<Release> {
+fn get_releases(
+    agent: &Agent,
+    repository: &arguments::Repository,
+    headers: &[String],
+) -> Vec<Release> {
     let releases_address = get_releases_api_url(repository);
 
-    let response =
-        make_get_request(agent, &releases_address, &repository.headers).unwrap_or_else(|e| {
-            eprintln!("HTTP request failed:\n{e}");
-            process::exit(1);
-        });
+    let response = make_get_request(agent, &releases_address, headers).unwrap_or_else(|e| {
+        eprintln!("HTTP request failed:\n{e}");
+        process::exit(1);
+    });
 
     let releases_json_string = response.into_string().unwrap_or_else(|e| {
         eprintln!("Could not get json from response:\n{e}");
@@ -272,10 +273,14 @@ fn stream_response_into_file(
 }
 
 fn print_releases(releases_query_args: arguments::ReleasesQueryArgs) {
-    let agent: Agent = get_default_agent(&releases_query_args.repository);
+    let agent: Agent = get_default_agent(releases_query_args.connection_settings.ip_type);
 
     let repository: arguments::Repository = releases_query_args.repository;
-    let releases = get_releases(&agent, &repository);
+    let releases = get_releases(
+        &agent,
+        &repository,
+        &releases_query_args.connection_settings.headers,
+    );
     let releases_iter = releases
         .iter()
         .filter(|release| !release.prerelease || releases_query_args.allow_prerelease)
@@ -286,9 +291,13 @@ fn print_releases(releases_query_args: arguments::ReleasesQueryArgs) {
 }
 
 fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
-    let agent: Agent = get_default_agent(&assets_query_args.repository);
+    let agent: Agent = get_default_agent(assets_query_args.connection_settings.ip_type);
 
-    let releases = get_releases(&agent, &assets_query_args.repository);
+    let releases = get_releases(
+        &agent,
+        &assets_query_args.repository,
+        &assets_query_args.connection_settings.headers,
+    );
     // if no tag is specified, prereleases are not allowed
     // however if a tag is specified, the user explictly chose
     // a tag that might be a prerelease, so in this case it
@@ -315,9 +324,13 @@ fn print_assets(assets_query_args: arguments::AssetsQueryArgs) {
 fn download_assets(download_args: arguments::DownloadArgs) {
     let compiled_asset_pattern = get_compiled_asset_pattern_or_exit(&download_args.asset_pattern);
 
-    let agent: Agent = get_default_agent(&download_args.repository);
+    let agent: Agent = get_default_agent(download_args.connection_settings.ip_type);
 
-    let releases = get_releases(&agent, &download_args.repository);
+    let releases = get_releases(
+        &agent,
+        &download_args.repository,
+        &download_args.connection_settings.headers,
+    );
 
     let asset = get_asset_or_exit(&releases, &download_args, &compiled_asset_pattern);
 
@@ -331,7 +344,7 @@ fn download_assets(download_args: arguments::DownloadArgs) {
     let response = make_get_request(
         &agent,
         &asset.browser_download_url,
-        &download_args.repository.headers,
+        &download_args.connection_settings.headers,
     )
     .unwrap_or_else(|e| {
         eprintln!("Error downloading file:\n{e}");
